@@ -15,6 +15,9 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "ppsspp_config.h"
+#if PPSSPP_ARCH(ARM64)
+
 #include <algorithm>
 
 #include "Core/MIPS/MIPS.h"
@@ -41,7 +44,7 @@ using namespace MIPSAnalyst;
 // Currently known non working ones should have DISABLE.
 
 // #define CONDITIONAL_DISABLE { Comp_Generic(op); return; }
-#define CONDITIONAL_DISABLE ;
+#define CONDITIONAL_DISABLE(flag) if (jo.Disabled(JitDisable::flag)) { Comp_Generic(op); return; }
 #define DISABLE { Comp_Generic(op); return; }
 
 namespace MIPSComp {
@@ -54,7 +57,7 @@ static u32 EvalAnd(u32 a, u32 b) { return a & b; }
 static u32 EvalAdd(u32 a, u32 b) { return a + b; }
 static u32 EvalSub(u32 a, u32 b) { return a - b; }
 
-void Arm64Jit::CompImmLogic(MIPSGPReg rs, MIPSGPReg rt, u32 uimm, void (ARM64XEmitter::*arith)(ARM64Reg dst, ARM64Reg src, ARM64Reg src2), bool (ARM64XEmitter::*tryArithI2R)(ARM64Reg dst, ARM64Reg src, u32 val), u32 (*eval)(u32 a, u32 b)) {
+void Arm64Jit::CompImmLogic(MIPSGPReg rs, MIPSGPReg rt, u32 uimm, void (ARM64XEmitter::*arith)(ARM64Reg dst, ARM64Reg src, ARM64Reg src2), bool (ARM64XEmitter::*tryArithI2R)(ARM64Reg dst, ARM64Reg src, u64 val), u32 (*eval)(u32 a, u32 b)) {
 	if (gpr.IsImm(rs)) {
 		gpr.SetImm(rt, (*eval)(gpr.GetImm(rs), uimm));
 	} else {
@@ -67,7 +70,7 @@ void Arm64Jit::CompImmLogic(MIPSGPReg rs, MIPSGPReg rt, u32 uimm, void (ARM64XEm
 }
 
 void Arm64Jit::Comp_IType(MIPSOpcode op) {
-	CONDITIONAL_DISABLE;
+	CONDITIONAL_DISABLE(ALU_IMM);
 	s32 simm = (s32)(s16)(op & 0xFFFF);  // sign extension
 	u32 uimm = op & 0xFFFF;
 	u32 suimm = (u32)(s32)simm;
@@ -84,14 +87,10 @@ void Arm64Jit::Comp_IType(MIPSOpcode op) {
 	case 9:	// R(rt) = R(rs) + simm; break;	//addiu
 		// Special-case for small adjustments of pointerified registers. Commonly for SP but happens for others.
 		if (rs == rt && gpr.IsMappedAsPointer(rs) && IsImmArithmetic(simm < 0 ? -simm : simm, nullptr, nullptr)) {
-			ARM64Reg r32 = gpr.R(rs);
+			ARM64Reg r32 = gpr.RPtr(rs);
 			gpr.MarkDirty(r32);
 			ARM64Reg r = EncodeRegTo64(r32);
-			if (simm > 0) {
-				ADDI2R(r, r, simm);
-			} else {
-				SUBI2R(r, r, -simm);
-			}
+			ADDI2R(r, r, simm);
 		} else {
 			if (simm >= 0) {
 				CompImmLogic(rs, rt, simm, &ARM64XEmitter::ADD, &ARM64XEmitter::TryADDI2R, &EvalAdd);
@@ -116,7 +115,7 @@ void Arm64Jit::Comp_IType(MIPSOpcode op) {
 			break;
 		}
 		gpr.MapDirtyIn(rt, rs);
-		if (!TryCMPI2R(gpr.R(rs), simm)) {
+		if (!TryCMPI2R(gpr.R(rs), (u32)simm)) {
 			gpr.SetRegImm(SCRATCH1, simm);
 			CMP(gpr.R(rs), SCRATCH1);
 		}
@@ -147,7 +146,7 @@ void Arm64Jit::Comp_IType(MIPSOpcode op) {
 }
 
 void Arm64Jit::Comp_RType2(MIPSOpcode op) {
-	CONDITIONAL_DISABLE;
+	CONDITIONAL_DISABLE(ALU_BIT);
 
 	MIPSGPReg rs = _RS;
 	MIPSGPReg rd = _RD;
@@ -193,7 +192,7 @@ void Arm64Jit::Comp_RType2(MIPSOpcode op) {
 	}
 }
 
-void Arm64Jit::CompType3(MIPSGPReg rd, MIPSGPReg rs, MIPSGPReg rt, void (ARM64XEmitter::*arith)(ARM64Reg dst, ARM64Reg rm, ARM64Reg rn), bool (ARM64XEmitter::*tryArithI2R)(ARM64Reg dst, ARM64Reg rm, u32 val), u32(*eval)(u32 a, u32 b), bool symmetric) {
+void Arm64Jit::CompType3(MIPSGPReg rd, MIPSGPReg rs, MIPSGPReg rt, void (ARM64XEmitter::*arith)(ARM64Reg dst, ARM64Reg rm, ARM64Reg rn), bool (ARM64XEmitter::*tryArithI2R)(ARM64Reg dst, ARM64Reg rm, u64 val), u32(*eval)(u32 a, u32 b), bool symmetric) {
 	if (gpr.IsImm(rs) && gpr.IsImm(rt)) {
 		gpr.SetImm(rd, (*eval)(gpr.GetImm(rs), gpr.GetImm(rt)));
 		return;
@@ -235,7 +234,7 @@ void Arm64Jit::CompType3(MIPSGPReg rd, MIPSGPReg rs, MIPSGPReg rt, void (ARM64XE
 }
 
 void Arm64Jit::Comp_RType3(MIPSOpcode op) {
-	CONDITIONAL_DISABLE;
+	CONDITIONAL_DISABLE(ALU);
 
 	MIPSGPReg rt = _RT;
 	MIPSGPReg rs = _RS;
@@ -259,7 +258,16 @@ void Arm64Jit::Comp_RType3(MIPSOpcode op) {
 
 	case 32: //R(rd) = R(rs) + R(rt);           break; //add
 	case 33: //R(rd) = R(rs) + R(rt);           break; //addu
-		CompType3(rd, rs, rt, &ARM64XEmitter::ADD, &ARM64XEmitter::TryADDI2R, &EvalAdd, true);
+		if (gpr.IsImm(rs) && gpr.GetImm(rs) == 0 && !gpr.IsImm(rt)) {
+			// Special case: actually a mov, avoid arithmetic.
+			gpr.MapDirtyIn(rd, rt);
+			MOV(gpr.R(rd), gpr.R(rt));
+		} else if (gpr.IsImm(rt) && gpr.GetImm(rt) == 0 && !gpr.IsImm(rs)) {
+			gpr.MapDirtyIn(rd, rs);
+			MOV(gpr.R(rd), gpr.R(rs));
+		} else {
+			CompType3(rd, rs, rt, &ARM64XEmitter::ADD, &ARM64XEmitter::TryADDI2R, &EvalAdd, true);
+		}
 		break;
 
 	case 34: //R(rd) = R(rs) - R(rt);           break; //sub
@@ -389,18 +397,16 @@ void Arm64Jit::CompShiftVar(MIPSOpcode op, Arm64Gen::ShiftType shiftType) {
 		return;
 	}
 	gpr.MapDirtyInIn(rd, rs, rt);
-	// Not sure if ARM64 wraps like this so let's do it for it.  (TODO: According to the ARM ARM, it will indeed mask for us so this is not necessary)
-	ANDI2R(SCRATCH1, gpr.R(rs), 0x1F, INVALID_REG);
 	switch (shiftType) {
-	case ST_LSL: LSLV(gpr.R(rd), gpr.R(rt), SCRATCH1); break;
-	case ST_LSR: LSRV(gpr.R(rd), gpr.R(rt), SCRATCH1); break;
-	case ST_ASR: ASRV(gpr.R(rd), gpr.R(rt), SCRATCH1); break;
-	case ST_ROR: RORV(gpr.R(rd), gpr.R(rt), SCRATCH1); break;
+	case ST_LSL: LSLV(gpr.R(rd), gpr.R(rt), gpr.R(rs)); break;
+	case ST_LSR: LSRV(gpr.R(rd), gpr.R(rt), gpr.R(rs)); break;
+	case ST_ASR: ASRV(gpr.R(rd), gpr.R(rt), gpr.R(rs)); break;
+	case ST_ROR: RORV(gpr.R(rd), gpr.R(rt), gpr.R(rs)); break;
 	}
 }
 
 void Arm64Jit::Comp_ShiftType(MIPSOpcode op) {
-	CONDITIONAL_DISABLE;
+	CONDITIONAL_DISABLE(ALU);
 	MIPSGPReg rs = _RS;
 	MIPSGPReg rd = _RD;
 	int fd = _FD;
@@ -425,7 +431,7 @@ void Arm64Jit::Comp_ShiftType(MIPSOpcode op) {
 }
 
 void Arm64Jit::Comp_Special3(MIPSOpcode op) {
-	CONDITIONAL_DISABLE;
+	CONDITIONAL_DISABLE(ALU_BIT);
 	MIPSGPReg rs = _RS;
 	MIPSGPReg rt = _RT;
 
@@ -473,7 +479,7 @@ void Arm64Jit::Comp_Special3(MIPSOpcode op) {
 }
 
 void Arm64Jit::Comp_Allegrex(MIPSOpcode op) {
-	CONDITIONAL_DISABLE;
+	CONDITIONAL_DISABLE(ALU_BIT);
 	MIPSGPReg rt = _RT;
 	MIPSGPReg rd = _RD;
 	// Don't change $zr.
@@ -523,7 +529,7 @@ void Arm64Jit::Comp_Allegrex(MIPSOpcode op) {
 }
 
 void Arm64Jit::Comp_Allegrex2(MIPSOpcode op) {
-	CONDITIONAL_DISABLE;
+	CONDITIONAL_DISABLE(ALU_BIT);
 	MIPSGPReg rt = _RT;
 	MIPSGPReg rd = _RD;
 	// Don't change $zr.
@@ -554,7 +560,7 @@ void Arm64Jit::Comp_Allegrex2(MIPSOpcode op) {
 }
 
 void Arm64Jit::Comp_MulDivType(MIPSOpcode op) {
-	CONDITIONAL_DISABLE;
+	CONDITIONAL_DISABLE(MULDIV);
 	MIPSGPReg rt = _RT;
 	MIPSGPReg rs = _RS;
 	MIPSGPReg rd = _RD;
@@ -623,44 +629,62 @@ void Arm64Jit::Comp_MulDivType(MIPSOpcode op) {
 		break;
 
 	case 26: //div
+	{
 		// TODO: Does this handle INT_MAX, 0, etc. correctly?
 		gpr.MapDirtyInIn(MIPS_REG_LO, rs, rt);
-		UBFX(SCRATCH1_64, EncodeRegTo64(gpr.R(MIPS_REG_LO)), 32, 32);
 		SDIV(gpr.R(MIPS_REG_LO), gpr.R(rs), gpr.R(rt));
 		MSUB(SCRATCH1, gpr.R(rt), gpr.R(MIPS_REG_LO), gpr.R(rs));
+
+		CMPI2R(gpr.R(rt), 0);
+		FixupBranch skipZero = B(CC_NEQ);
+		// HI set properly already, we just need to set LO.
+		MOVI2R(gpr.R(MIPS_REG_LO), -1);
+		CMPI2R(gpr.R(rs), 0);
+		FixupBranch moreThan16Bit = B(CC_GE);
+		MOVI2R(gpr.R(MIPS_REG_LO), 1);
+		SetJumpTarget(moreThan16Bit);
+		SetJumpTarget(skipZero);
+
 		BFI(EncodeRegTo64(gpr.R(MIPS_REG_LO)), SCRATCH1_64, 32, 32);
 		break;
+	}
 
 	case 27: //divu
 		// Do we have a known power-of-two denominator?  Yes, this happens.
-		if (gpr.IsImm(rt) && (gpr.GetImm(rt) & (gpr.GetImm(rt) - 1)) == 0) {
+		if (gpr.IsImm(rt) && (gpr.GetImm(rt) & (gpr.GetImm(rt) - 1)) == 0 && gpr.GetImm(rt) != 0) {
 			u32 denominator = gpr.GetImm(rt);
-			if (denominator == 0) {
-				// TODO: Is this correct?
-				gpr.SetImm(MIPS_REG_LO, 0);
-			} else {
-				gpr.MapDirtyIn(MIPS_REG_LO, rs);
-				// Remainder is just an AND, neat.
-				ANDI2R(SCRATCH1, gpr.R(rs), denominator - 1, SCRATCH1);
-				int shift = 0;
-				while (denominator != 0) {
-					++shift;
-					denominator >>= 1;
-				}
-				// The shift value is one too much for the divide by the same value.
-				if (shift > 1) {
-					LSR(gpr.R(MIPS_REG_LO), gpr.R(rs), shift - 1);
-				} else {
-					MOV(gpr.R(MIPS_REG_LO), gpr.R(rs));
-				}
-				BFI(EncodeRegTo64(gpr.R(MIPS_REG_LO)), SCRATCH1_64, 32, 32);
+			gpr.MapDirtyIn(MIPS_REG_LO, rs);
+			// Remainder is just an AND, neat.
+			ANDI2R(SCRATCH1, gpr.R(rs), denominator - 1, SCRATCH1);
+			int shift = 0;
+			while (denominator != 0) {
+				++shift;
+				denominator >>= 1;
 			}
+			// The shift value is one too much for the divide by the same value.
+			if (shift > 1) {
+				LSR(gpr.R(MIPS_REG_LO), gpr.R(rs), shift - 1);
+			} else {
+				MOV(gpr.R(MIPS_REG_LO), gpr.R(rs));
+			}
+			BFI(EncodeRegTo64(gpr.R(MIPS_REG_LO)), SCRATCH1_64, 32, 32);
 		} else {
 			// TODO: Does this handle INT_MAX, 0, etc. correctly?
 			gpr.MapDirtyInIn(MIPS_REG_LO, rs, rt);
-			UBFX(SCRATCH1_64, EncodeRegTo64(gpr.R(MIPS_REG_LO)), 32, 32);
 			UDIV(gpr.R(MIPS_REG_LO), gpr.R(rs), gpr.R(rt));
 			MSUB(SCRATCH1, gpr.R(rt), gpr.R(MIPS_REG_LO), gpr.R(rs));
+
+			CMPI2R(gpr.R(rt), 0);
+			FixupBranch skipZero = B(CC_NEQ);
+			// HI set properly, we just need to set LO.
+			MOVI2R(SCRATCH2, 0xFFFF);
+			MOVI2R(gpr.R(MIPS_REG_LO), -1);
+			CMP(gpr.R(rs), SCRATCH2);
+			FixupBranch moreThan16Bit = B(CC_HI);
+			MOV(gpr.R(MIPS_REG_LO), SCRATCH2);
+			SetJumpTarget(moreThan16Bit);
+			SetJumpTarget(skipZero);
+
 			BFI(EncodeRegTo64(gpr.R(MIPS_REG_LO)), SCRATCH1_64, 32, 32);
 		}
 		break;
@@ -703,3 +727,5 @@ void Arm64Jit::Comp_MulDivType(MIPSOpcode op) {
 }
 
 }
+
+#endif // PPSSPP_ARCH(ARM64)

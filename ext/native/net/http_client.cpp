@@ -3,7 +3,9 @@
 
 #ifndef _WIN32
 #include <arpa/inet.h>
+#include <sys/select.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
 #define closesocket close
 #else
@@ -12,6 +14,7 @@
 #include <io.h>
 #endif
 
+#include <cmath>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -19,12 +22,14 @@
 #include "base/buffer.h"
 #include "base/stringutil.h"
 #include "data/compression.h"
+#include "file/fd_util.h"
 #include "net/resolve.h"
 #include "net/url.h"
+#include "thread/threadutil.h"
 
 namespace net {
 
-Connection::Connection() 
+Connection::Connection()
 		: port_(-1), resolved_(NULL), sock_(-1) {
 }
 
@@ -41,20 +46,24 @@ inline unsigned short myhtons(unsigned short x) {
 	return (x >> 8) | (x << 8);
 }
 
-bool Connection::Resolve(const char *host, int port) {
+bool Connection::Resolve(const char *host, int port, DNSType type) {
 	if ((intptr_t)sock_ != -1) {
 		ELOG("Resolve: Already have a socket");
+		return false;
+	}
+	if (!host || port < 1 || port > 65535) {
+		ELOG("Resolve: Invalid host or port (%d)", port);
 		return false;
 	}
 
 	host_ = host;
 	port_ = port;
 
-	char port_str[10];
+	char port_str[16];
 	snprintf(port_str, sizeof(port_str), "%d", port);
 
 	std::string err;
-	if (!net::DNSResolve(host, port_str, &resolved_, err)) {
+	if (!net::DNSResolve(host, port_str, &resolved_, err, type)) {
 		ELOG("Failed to resolve host %s: %s", host, err.c_str());
 		// So that future calls fail.
 		port_ = 0;
@@ -64,33 +73,81 @@ bool Connection::Resolve(const char *host, int port) {
 	return true;
 }
 
-bool Connection::Connect(int maxTries) {
+bool Connection::Connect(int maxTries, double timeout, bool *cancelConnect) {
 	if (port_ <= 0) {
 		ELOG("Bad port");
 		return false;
 	}
-	sock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if ((intptr_t)sock_ == -1) {
-		ELOG("Bad socket");
-		return false;
-	}
+	sock_ = -1;
 
 	for (int tries = maxTries; tries > 0; --tries) {
-		for (addrinfo *possible = resolved_; possible != NULL; possible = possible->ai_next) {
+		std::vector<uintptr_t> sockets;
+		fd_set fds;
+		int maxfd = 1;
+		FD_ZERO(&fds);
+		for (addrinfo *possible = resolved_; possible != nullptr; possible = possible->ai_next) {
 			// TODO: Could support ipv6 without huge difficulty...
-			if (possible->ai_family != AF_INET)
+			if (possible->ai_family != AF_INET && possible->ai_family != AF_INET6)
 				continue;
 
-			int retval = connect(sock_, possible->ai_addr, (int)possible->ai_addrlen);
-			if (retval >= 0)
-				return true;
+			int sock = socket(possible->ai_family, SOCK_STREAM, IPPROTO_TCP);
+			if ((intptr_t)sock == -1) {
+				ELOG("Bad socket");
+				continue;
+			}
+			fd_util::SetNonBlocking(sock, true);
+
+			// Start trying to connect (async with timeout.)
+			connect(sock, possible->ai_addr, (int)possible->ai_addrlen);
+			sockets.push_back(sock);
+			FD_SET(sock, &fds);
+			if (maxfd < sock + 1) {
+				maxfd = sock + 1;
+			}
 		}
+
+		int selectResult = 0;
+		long timeoutHalfSeconds = floor(2 * timeout);
+		while (timeoutHalfSeconds >= 0 && selectResult == 0) {
+			struct timeval tv;
+			tv.tv_sec = 0;
+			if (timeoutHalfSeconds > 0) {
+				// Wait up to 0.5 seconds between cancel checks.
+				tv.tv_usec = 500000;
+			} else {
+				// Wait the remaining <= 0.5 seconds.  Possibly 0, but that's okay.
+				tv.tv_usec = (timeout - floor(2 * timeout) / 2) * 1000000.0;
+			}
+			--timeoutHalfSeconds;
+
+			selectResult = select(maxfd, nullptr, &fds, nullptr, &tv);
+			if (cancelConnect && *cancelConnect) {
+				break;
+			}
+		}
+		if (selectResult > 0) {
+			// Something connected.  Pick the first one that did (if multiple.)
+			for (int sock : sockets) {
+				if ((intptr_t)sock_ == -1 && FD_ISSET(sock, &fds)) {
+					fd_util::SetNonBlocking(sock, false);
+					sock_ = sock;
+				} else {
+					closesocket(sock);
+				}
+			}
+
+			// Great, now we're good to go.
+			return true;
+		}
+
+		if (cancelConnect && *cancelConnect) {
+			break;
+		}
+
 		sleep_ms(1);
 	}
 
-	// Let's not leak this socket.
-	closesocket(sock_);
-	sock_ = -1;
+	// Nothing connected, unfortunately.
 	return false;
 }
 
@@ -125,7 +182,7 @@ void DeChunk(Buffer *inbuffer, Buffer *outbuffer, int contentLength, float *prog
 		inbuffer->TakeLineCRLF(&line);
 		if (!line.size())
 			return;
-		int chunkSize;
+		unsigned int chunkSize;
 		sscanf(line.c_str(), "%x", &chunkSize);
 		if (chunkSize) {
 			std::string data;
@@ -144,7 +201,7 @@ void DeChunk(Buffer *inbuffer, Buffer *outbuffer, int contentLength, float *prog
 	}
 }
 
-int Client::GET(const char *resource, Buffer *output, float *progress) {
+int Client::GET(const char *resource, Buffer *output, std::vector<std::string> &responseHeaders, float *progress, bool *cancelled) {
 	const char *otherHeaders =
 		"Accept: */*\r\n"
 		"Accept-Encoding: gzip\r\n";
@@ -154,16 +211,21 @@ int Client::GET(const char *resource, Buffer *output, float *progress) {
 	}
 
 	Buffer readbuf;
-	std::vector<std::string> responseHeaders;
 	int code = ReadResponseHeaders(&readbuf, responseHeaders, progress);
 	if (code < 0) {
 		return code;
 	}
 
-	err = ReadResponseEntity(&readbuf, responseHeaders, output, progress);
+	err = ReadResponseEntity(&readbuf, responseHeaders, output, progress, cancelled);
 	if (err < 0) {
 		return err;
 	}
+	return code;
+}
+
+int Client::GET(const char *resource, Buffer *output, float *progress, bool *cancelled) {
+	std::vector<std::string> responseHeaders;
+	int code = GET(resource, output, responseHeaders, progress,  cancelled);
 	return code;
 }
 
@@ -221,7 +283,7 @@ int Client::SendRequestWithData(const char *method, const char *resource, const 
 		userAgent_,
 		otherHeaders ? otherHeaders : "");
 	buffer.Append(data);
-	bool flushed = buffer.FlushSocket(sock());
+	bool flushed = buffer.FlushSocket(sock(), dataTimeout_);
 	if (!flushed) {
 		return -1;  // TODO error code.
 	}
@@ -230,6 +292,10 @@ int Client::SendRequestWithData(const char *method, const char *resource, const 
 
 int Client::ReadResponseHeaders(Buffer *readbuf, std::vector<std::string> &responseHeaders, float *progress) {
 	// Snarf all the data we can into RAM. A little unsafe but hey.
+	if (dataTimeout_ >= 0.0 && !fd_util::WaitUntilReady(sock(), dataTimeout_, false)) {
+		ELOG("HTTP headers timed out");
+		return -1;
+	}
 	if (readbuf->Read(sock(), 4096) < 0) {
 		ELOG("Failed to read HTTP headers :(");
 		return -1;
@@ -266,7 +332,7 @@ int Client::ReadResponseHeaders(Buffer *readbuf, std::vector<std::string> &respo
 	return code;
 }
 
-int Client::ReadResponseEntity(Buffer *readbuf, const std::vector<std::string> &responseHeaders, Buffer *output, float *progress) {
+int Client::ReadResponseEntity(Buffer *readbuf, const std::vector<std::string> &responseHeaders, Buffer *output, float *progress, bool *cancelled) {
 	bool gzip = false;
 	bool chunked = false;
 	int contentLength = 0;
@@ -305,7 +371,7 @@ int Client::ReadResponseEntity(Buffer *readbuf, const std::vector<std::string> &
 			return -1;
 	} else {
 		// Let's read in chunks, updating progress between each.
-		if (!readbuf->ReadAllWithProgress(sock(), contentLength, progress))
+		if (!readbuf->ReadAllWithProgress(sock(), contentLength, progress, cancelled))
 			return -1;
 	}
 
@@ -356,6 +422,7 @@ void Download::SetFailed(int code) {
 }
 
 void Download::Do(std::shared_ptr<Download> self) {
+	setCurrentThreadName("Downloader::Do");
 	// as long as this is in scope, we won't get destructed.
 	// yeah this is ugly, I need to think about how life time should be managed for these...
 	std::shared_ptr<Download> self_ = self;
@@ -366,7 +433,6 @@ void Download::Do(std::shared_ptr<Download> self) {
 		SetFailed(-1);
 		return;
 	}
-	net::AutoInit netInit;
 
 	http::Client client;
 	if (!client.Resolve(fileUrl.Host().c_str(), fileUrl.Port())) {
@@ -392,7 +458,7 @@ void Download::Do(std::shared_ptr<Download> self) {
 	}
 
 	// TODO: Allow cancelling during a GET somehow...
-	int resultCode = client.GET(fileUrl.Resource().c_str(), &buffer_, &progress_);
+	int resultCode = client.GET(fileUrl.Resource().c_str(), &buffer_, &progress_, &cancelled_);
 	if (resultCode == 200) {
 		ILOG("Completed downloading %s to %s", url_.c_str(), outfile_.empty() ? "memory" : outfile_.c_str());
 		if (!outfile_.empty() && !buffer_.FlushToFile(outfile_.c_str())) {

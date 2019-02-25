@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <map>
+#include <unordered_map>
 
 #include "base/basictypes.h"
 #include "base/logging.h"
@@ -39,6 +40,14 @@
 #if defined(_M_IX86) || defined(_M_X64)
 #include <emmintrin.h>
 #endif
+
+enum class GPUReplacementSkip {
+	MEMSET = 1,
+	MEMCPY = 2,
+	MEMMOVE = 4,
+};
+
+static int skipGPUReplacements = 0;
 
 // I think these have to be pretty accurate as these are libc replacements,
 // but we can probably get away with approximating the VFPU vsin/vcos and vrot
@@ -118,8 +127,10 @@ static int Replace_memcpy() {
 
 	// Some games use memcpy on executable code.  We need to flush emuhack ops.
 	currentMIPS->InvalidateICache(srcPtr, bytes);
-	if (Memory::IsVRAMAddress(destPtr) || Memory::IsVRAMAddress(srcPtr)) {
-		skip = gpu->PerformMemoryCopy(destPtr, srcPtr, bytes);
+	if ((skipGPUReplacements & (int)GPUReplacementSkip::MEMCPY) == 0) {
+		if (Memory::IsVRAMAddress(destPtr) || Memory::IsVRAMAddress(srcPtr)) {
+			skip = gpu->PerformMemoryCopy(destPtr, srcPtr, bytes);
+		}
 	}
 	if (!skip && bytes != 0) {
 		u8 *dst = Memory::GetPointer(destPtr);
@@ -141,10 +152,10 @@ static int Replace_memcpy() {
 		}
 	}
 	RETURN(destPtr);
-#ifndef MOBILE_DEVICE
+
 	CBreakPoints::ExecMemCheck(srcPtr, false, bytes, currentMIPS->pc);
 	CBreakPoints::ExecMemCheck(destPtr, true, bytes, currentMIPS->pc);
-#endif
+
 	return 10 + bytes / 4;  // approximation
 }
 
@@ -158,8 +169,10 @@ static int Replace_memcpy_jak() {
 		return 5;
 	}
 	currentMIPS->InvalidateICache(srcPtr, bytes);
-	if (Memory::IsVRAMAddress(destPtr) || Memory::IsVRAMAddress(srcPtr)) {
-		skip = gpu->PerformMemoryCopy(destPtr, srcPtr, bytes);
+	if ((skipGPUReplacements & (int)GPUReplacementSkip::MEMCPY) == 0) {
+		if (Memory::IsVRAMAddress(destPtr) || Memory::IsVRAMAddress(srcPtr)) {
+			skip = gpu->PerformMemoryCopy(destPtr, srcPtr, bytes);
+		}
 	}
 	if (!skip && bytes != 0) {
 		u8 *dst = Memory::GetPointer(destPtr);
@@ -181,10 +194,10 @@ static int Replace_memcpy_jak() {
 	currentMIPS->r[MIPS_REG_A2] = 0;
 	currentMIPS->r[MIPS_REG_A3] = destPtr + bytes;
 	RETURN(destPtr);
-#ifndef MOBILE_DEVICE
+
 	CBreakPoints::ExecMemCheck(srcPtr, false, bytes, currentMIPS->pc);
 	CBreakPoints::ExecMemCheck(destPtr, true, bytes, currentMIPS->pc);
-#endif
+
 	return 5 + bytes * 8 + 2;  // approximation. This is a slow memcpy - a byte copy loop..
 }
 
@@ -196,8 +209,10 @@ static int Replace_memcpy16() {
 
 	// Some games use memcpy on executable code.  We need to flush emuhack ops.
 	currentMIPS->InvalidateICache(srcPtr, bytes);
-	if (Memory::IsVRAMAddress(destPtr) || Memory::IsVRAMAddress(srcPtr)) {
-		skip = gpu->PerformMemoryCopy(destPtr, srcPtr, bytes);
+	if ((skipGPUReplacements & (int)GPUReplacementSkip::MEMCPY) == 0) {
+		if (Memory::IsVRAMAddress(destPtr) || Memory::IsVRAMAddress(srcPtr)) {
+			skip = gpu->PerformMemoryCopy(destPtr, srcPtr, bytes);
+		}
 	}
 	if (!skip && bytes != 0) {
 		u8 *dst = Memory::GetPointer(destPtr);
@@ -207,10 +222,10 @@ static int Replace_memcpy16() {
 		}
 	}
 	RETURN(destPtr);
-#ifndef MOBILE_DEVICE
+
 	CBreakPoints::ExecMemCheck(srcPtr, false, bytes, currentMIPS->pc);
 	CBreakPoints::ExecMemCheck(destPtr, true, bytes, currentMIPS->pc);
-#endif
+
 	return 10 + bytes / 4;  // approximation
 }
 
@@ -219,8 +234,10 @@ static int Replace_memcpy_swizzled() {
 	u32 srcPtr = PARAM(1);
 	u32 pitch = PARAM(2);
 	u32 h = PARAM(4);
-	if (Memory::IsVRAMAddress(srcPtr)) {
-		gpu->PerformMemoryDownload(srcPtr, pitch * h);
+	if ((skipGPUReplacements & (int)GPUReplacementSkip::MEMCPY) == 0) {
+		if (Memory::IsVRAMAddress(srcPtr)) {
+			gpu->PerformMemoryDownload(srcPtr, pitch * h);
+		}
 	}
 	u8 *dstp = Memory::GetPointer(destPtr);
 	const u8 *srcp = Memory::GetPointer(srcPtr);
@@ -243,10 +260,10 @@ static int Replace_memcpy_swizzled() {
 	}
 
 	RETURN(0);
-#ifndef MOBILE_DEVICE
+
 	CBreakPoints::ExecMemCheck(srcPtr, false, pitch * h, currentMIPS->pc);
 	CBreakPoints::ExecMemCheck(destPtr, true, pitch * h, currentMIPS->pc);
-#endif
+
 	return 10 + (pitch * h) / 4;  // approximation
 }
 
@@ -257,9 +274,11 @@ static int Replace_memmove() {
 	bool skip = false;
 
 	// Some games use memcpy on executable code.  We need to flush emuhack ops.
-	currentMIPS->InvalidateICache(srcPtr, bytes);
-	if (Memory::IsVRAMAddress(destPtr) || Memory::IsVRAMAddress(srcPtr)) {
-		skip = gpu->PerformMemoryCopy(destPtr, srcPtr, bytes);
+	if ((skipGPUReplacements & (int)GPUReplacementSkip::MEMMOVE) == 0) {
+		currentMIPS->InvalidateICache(srcPtr, bytes);
+		if (Memory::IsVRAMAddress(destPtr) || Memory::IsVRAMAddress(srcPtr)) {
+			skip = gpu->PerformMemoryCopy(destPtr, srcPtr, bytes);
+		}
 	}
 	if (!skip && bytes != 0) {
 		u8 *dst = Memory::GetPointer(destPtr);
@@ -269,10 +288,10 @@ static int Replace_memmove() {
 		}
 	}
 	RETURN(destPtr);
-#ifndef MOBILE_DEVICE
+
 	CBreakPoints::ExecMemCheck(srcPtr, false, bytes, currentMIPS->pc);
 	CBreakPoints::ExecMemCheck(destPtr, true, bytes, currentMIPS->pc);
-#endif
+
 	return 10 + bytes / 4;  // approximation
 }
 
@@ -281,7 +300,7 @@ static int Replace_memset() {
 	u8 value = PARAM(1);
 	u32 bytes = PARAM(2);
 	bool skip = false;
-	if (Memory::IsVRAMAddress(destPtr)) {
+	if (Memory::IsVRAMAddress(destPtr) && (skipGPUReplacements & (int)GPUReplacementSkip::MEMSET) == 0) {
 		skip = gpu->PerformMemorySet(destPtr, value, bytes);
 	}
 	if (!skip && bytes != 0) {
@@ -291,9 +310,9 @@ static int Replace_memset() {
 		}
 	}
 	RETURN(destPtr);
-#ifndef MOBILE_DEVICE
+
 	CBreakPoints::ExecMemCheck(destPtr, true, bytes, currentMIPS->pc);
-#endif
+
 	return 10 + bytes / 4;  // approximation
 }
 
@@ -308,7 +327,7 @@ static int Replace_memset_jak() {
 	}
 
 	bool skip = false;
-	if (Memory::IsVRAMAddress(destPtr)) {
+	if (Memory::IsVRAMAddress(destPtr) && (skipGPUReplacements & (int)GPUReplacementSkip::MEMSET) == 0) {
 		skip = gpu->PerformMemorySet(destPtr, value, bytes);
 	}
 	if (!skip && bytes != 0) {
@@ -323,9 +342,8 @@ static int Replace_memset_jak() {
 	currentMIPS->r[MIPS_REG_A3] = -1;
 	RETURN(destPtr);
 
-#ifndef MOBILE_DEVICE
 	CBreakPoints::ExecMemCheck(destPtr, true, bytes, currentMIPS->pc);
-#endif
+
 	return 5 + bytes * 6 + 2;  // approximation (hm, inspecting the disasm this should be 5 + 6 * bytes + 2, but this is what works..)
 }
 
@@ -572,11 +590,9 @@ static int Replace_dl_write_matrix() {
 #endif
 	}
 
-#ifndef MOBILE_DEVICE
 	CBreakPoints::ExecMemCheck(PARAM(2), false, count * sizeof(float), currentMIPS->pc);
 	CBreakPoints::ExecMemCheck(PARAM(0) + 2 * sizeof(u32), true, sizeof(u32), currentMIPS->pc);
 	CBreakPoints::ExecMemCheck(dlStruct[2], true, (count + 1) * sizeof(u32), currentMIPS->pc);
-#endif
 
 	dlStruct[2] += (1 + count) * 4;
 	RETURN(dlStruct[2]);
@@ -590,10 +606,23 @@ static bool GetMIPSStaticAddress(u32 &addr, s32 lui_offset, s32 lw_offset) {
 	}
 	const MIPSOpcode lower = Memory::Read_Instruction(currentMIPS->pc + lw_offset, true);
 	if (lower != MIPS_MAKE_LW(MIPS_GET_RT(lower), MIPS_GET_RS(lower), lower & 0xffff)) {
-		return false;
+		if (lower != MIPS_MAKE_ORI(MIPS_GET_RT(lower), MIPS_GET_RS(lower), lower & 0xffff)) {
+			return false;
+		}
 	}
 	addr = ((upper & 0xffff) << 16) + (s16)(lower & 0xffff);
 	return true;
+}
+
+static bool GetMIPSGPAddress(u32 &addr, s32 offset) {
+	const MIPSOpcode loadOp = Memory::Read_Instruction(currentMIPS->pc + offset, true);
+	if (MIPS_GET_RS(loadOp) == MIPS_REG_GP) {
+		s16 gpoff = (s16)(u16)(loadOp & 0x0000FFFF);
+		addr = currentMIPS->r[MIPS_REG_GP] + gpoff;
+		return true;
+	}
+
+	return false;
 }
 
 static int Hook_godseaterburst_blit_texture() {
@@ -632,7 +661,7 @@ static int Hook_hexyzforce_monoclome_thread() {
 
 static int Hook_starocean_write_stencil() {
 	const u32 fb_address = currentMIPS->r[MIPS_REG_T7];
-	if (Memory::IsVRAMAddress(fb_address) && !g_Config.bDisableStencilTest) {
+	if (Memory::IsVRAMAddress(fb_address)) {
 		gpu->PerformStencilUpload(fb_address, 0x00088000);
 	}
 	return 0;
@@ -1029,7 +1058,6 @@ static int Hook_tonyhawkp8_upload_tutorial_frame() {
 	const u32 fb_address = currentMIPS->r[MIPS_REG_A0];
 	if (Memory::IsVRAMAddress(fb_address)) {
 		gpu->PerformMemoryUpload(fb_address, 0x00088000);
-		CBreakPoints::ExecMemCheck(fb_address, true, 0x00088000, currentMIPS->pc);
 	}
 	return 0;
 }
@@ -1049,7 +1077,7 @@ static int Hook_atvoffroadfurypro_download_frame() {
 	if (Memory::IsVRAMAddress(fb_address)) {
 		gpu->PerformMemoryDownload(fb_address, fb_size);
 		CBreakPoints::ExecMemCheck(fb_address, true, fb_size, currentMIPS->pc);
-}
+	}
 	return 0;
 }
 
@@ -1059,7 +1087,7 @@ static int Hook_atvoffroadfuryblazintrails_download_frame() {
 	if (Memory::IsVRAMAddress(fb_address)) {
 		gpu->PerformMemoryDownload(fb_address, fb_size);
 		CBreakPoints::ExecMemCheck(fb_address, true, fb_size, currentMIPS->pc);
-}
+	}
 	return 0;
 }
 
@@ -1068,7 +1096,7 @@ static int Hook_littlebustersce_download_frame() {
 	if (Memory::IsVRAMAddress(fb_address)) {
 		gpu->PerformMemoryDownload(fb_address, 0x00088000);
 		CBreakPoints::ExecMemCheck(fb_address, true, 0x00088000, currentMIPS->pc);
-}
+	}
 	return 0;
 }
 
@@ -1087,7 +1115,7 @@ static int Hook_atvoffroadfuryprodemo_download_frame() {
 	if (Memory::IsVRAMAddress(fb_address)) {
 		gpu->PerformMemoryDownload(fb_address, fb_size);
 		CBreakPoints::ExecMemCheck(fb_address, true, fb_size, currentMIPS->pc);
-}
+	}
 	return 0;
 }
 
@@ -1096,7 +1124,7 @@ static int Hook_unendingbloodycall_download_frame() {
 	if (Memory::IsVRAMAddress(fb_address)) {
 		gpu->PerformMemoryDownload(fb_address, 0x00088000);
 		CBreakPoints::ExecMemCheck(fb_address, true, 0x00088000, currentMIPS->pc);
-}
+	}
 	return 0;
 }
 
@@ -1105,21 +1133,104 @@ static int Hook_omertachinmokunookitethelegacy_download_frame() {
 	if (Memory::IsVRAMAddress(fb_address)) {
 		gpu->PerformMemoryDownload(fb_address, 0x00044000);
 		CBreakPoints::ExecMemCheck(fb_address, true, 0x00044000, currentMIPS->pc);
-}
+	}
 	return 0;
 }
 
-#ifdef ARM
-#define JITFUNC(f) (&MIPSComp::ArmJit::f)
-#elif defined(ARM64)
-#define JITFUNC(f) (&MIPSComp::Arm64Jit::f)
-#elif defined(_M_X64) || defined(_M_IX86)
-#define JITFUNC(f) (&MIPSComp::Jit::f)
-#elif defined(MIPS)
-#define JITFUNC(f) (&MIPSComp::MipsJit::f)
-#else
-#define JITFUNC(f) (&MIPSComp::FakeJit::f)
-#endif
+static int Hook_katamari_render_check() {
+	const u32 fb_address = Memory::Read_U32(currentMIPS->r[MIPS_REG_A0] + 0x3C);
+	const u32 fbInfoPtr = Memory::Read_U32(currentMIPS->r[MIPS_REG_A0] + 0x40);
+	if (Memory::IsVRAMAddress(fb_address) && fbInfoPtr != 0) {
+		const u32 sizeInfoPtr = Memory::Read_U32(fbInfoPtr + 0x0C);
+		// These are the values it uses to control the loop.
+		// Width in memory appears to be stride / 8.
+		const u32 width = Memory::Read_U16(sizeInfoPtr + 0x08) * 8;
+		// Height in memory is also divided by 8 (but this one isn't hardcoded.)
+		const u32 heightBlocks = Memory::Read_U16(sizeInfoPtr + 0x0A);
+		// For some reason this is the number of heightBlocks less 1.
+		const u32 heightBlockCount = Memory::Read_U8(fbInfoPtr + 0x08) + 1;
+
+		const u32 totalBytes = width * heightBlocks * heightBlockCount;
+		gpu->PerformMemoryDownload(fb_address, totalBytes);
+		CBreakPoints::ExecMemCheck(fb_address, true, totalBytes, currentMIPS->pc);
+	}
+	return 0;
+}
+
+static int Hook_katamari_screenshot_to_565() {
+	u32 fb_address;
+	if (GetMIPSStaticAddress(fb_address, 0x0040, 0x0044)) {
+		gpu->PerformMemoryDownload(0x04000000 | fb_address, 0x00088000);
+		CBreakPoints::ExecMemCheck(0x04000000 | fb_address, true, 0x00088000, currentMIPS->pc);
+	}
+	return 0;
+}
+
+static int Hook_mytranwars_upload_frame() {
+	u32 fb_address = currentMIPS->r[MIPS_REG_S0];
+	if (Memory::IsVRAMAddress(fb_address)) {
+		gpu->PerformMemoryUpload(fb_address, 0x00088000);
+	}
+	return 0;
+}
+
+static u32 marvelalliance1_copy_src = 0;
+static u32 marvelalliance1_copy_dst = 0;
+static u32 marvelalliance1_copy_size = 0;
+
+static int Hook_marvelalliance1_copy_a1_before() {
+	marvelalliance1_copy_src = currentMIPS->r[MIPS_REG_A1];
+	marvelalliance1_copy_dst = currentMIPS->r[MIPS_REG_V1];
+	marvelalliance1_copy_size = currentMIPS->r[MIPS_REG_V0] - currentMIPS->r[MIPS_REG_V1];
+
+	gpu->PerformMemoryDownload(marvelalliance1_copy_src, marvelalliance1_copy_size);
+	CBreakPoints::ExecMemCheck(marvelalliance1_copy_src, true, marvelalliance1_copy_size, currentMIPS->pc);
+
+	return 0;
+}
+
+static int Hook_marvelalliance1_copy_a2_before() {
+	marvelalliance1_copy_src = currentMIPS->r[MIPS_REG_A2];
+	marvelalliance1_copy_dst = currentMIPS->r[MIPS_REG_V0];
+	marvelalliance1_copy_size = currentMIPS->r[MIPS_REG_A1] - currentMIPS->r[MIPS_REG_A2];
+
+	gpu->PerformMemoryDownload(marvelalliance1_copy_src, marvelalliance1_copy_size);
+	CBreakPoints::ExecMemCheck(marvelalliance1_copy_src, true, marvelalliance1_copy_size, currentMIPS->pc);
+
+	return 0;
+}
+
+static int Hook_marvelalliance1_copy_after() {
+	gpu->PerformMemoryUpload(marvelalliance1_copy_dst, marvelalliance1_copy_size);
+	CBreakPoints::ExecMemCheck(marvelalliance1_copy_dst, false, marvelalliance1_copy_size, currentMIPS->pc);
+
+	return 0;
+}
+
+static int Hook_starocean_clear_framebuf_before() {
+	skipGPUReplacements |= (int)GPUReplacementSkip::MEMSET;
+	return 0;
+}
+
+static int Hook_starocean_clear_framebuf_after() {
+	skipGPUReplacements &= ~(int)GPUReplacementSkip::MEMSET;
+
+	// This hook runs after the copy, this is the final memcpy destination.
+	u32 framebuf = currentMIPS->r[MIPS_REG_V0] - 512 * 4 * 271;
+	u32 y_address, h_address;
+
+	if (GetMIPSGPAddress(y_address, -204) && GetMIPSGPAddress(h_address, -200)) {
+		int y = (s16)Memory::Read_U16(y_address);
+		int h = (s16)Memory::Read_U16(h_address);
+
+		DEBUG_LOG(HLE, "starocean_clear_framebuf() - %08x y=%d-%d", framebuf, y, h);
+		// TODO: This is always clearing to 0, actually, which could be faster than an upload.
+		gpu->PerformMemoryUpload(framebuf + 512 * y * 4, 512 * h * 4);
+	}
+	return 0;
+}
+
+#define JITFUNC(f) (&MIPSComp::MIPSFrontendInterface::f)
 
 // Can either replace with C functions or functions emitted in Asm/ArmAsm.
 static const ReplacementTableEntry entries[] = {
@@ -1213,12 +1324,29 @@ static const ReplacementTableEntry entries[] = {
 	{ "atvoffroadfuryprodemo_download_frame", &Hook_atvoffroadfuryprodemo_download_frame, 0, REPFLAG_HOOKENTER, 0x80 },
 	{ "unendingbloodycall_download_frame", &Hook_unendingbloodycall_download_frame, 0, REPFLAG_HOOKENTER, 0x54 },
 	{ "omertachinmokunookitethelegacy_download_frame", &Hook_omertachinmokunookitethelegacy_download_frame, 0, REPFLAG_HOOKENTER, 0x88 },
+	{ "katamari_render_check", &Hook_katamari_render_check, 0, REPFLAG_HOOKENTER, 0, },
+	{ "katamari_screenshot_to_565", &Hook_katamari_screenshot_to_565, 0, REPFLAG_HOOKENTER, 0 },
+	{ "mytranwars_upload_frame", &Hook_mytranwars_upload_frame, 0, REPFLAG_HOOKENTER, 0x128 },
+	{ "marvelalliance1_copy", &Hook_marvelalliance1_copy_a1_before, 0, REPFLAG_HOOKENTER, 0x284 },
+	{ "marvelalliance1_copy", &Hook_marvelalliance1_copy_after, 0, REPFLAG_HOOKENTER, 0x2bc },
+	{ "marvelalliance1_copy", &Hook_marvelalliance1_copy_a1_before, 0, REPFLAG_HOOKENTER, 0x2e8 },
+	{ "marvelalliance1_copy", &Hook_marvelalliance1_copy_after, 0, REPFLAG_HOOKENTER, 0x320 },
+	{ "marvelalliance1_copy", &Hook_marvelalliance1_copy_a2_before, 0, REPFLAG_HOOKENTER, 0x3b0 },
+	{ "marvelalliance1_copy", &Hook_marvelalliance1_copy_after, 0, REPFLAG_HOOKENTER, 0x3e8 },
+	{ "marvelalliance1_copy", &Hook_marvelalliance1_copy_a2_before, 0, REPFLAG_HOOKENTER, 0x410 },
+	{ "marvelalliance1_copy", &Hook_marvelalliance1_copy_after, 0, REPFLAG_HOOKENTER, 0x448 },
+	{ "marvelalliance1_copy", &Hook_marvelalliance1_copy_a1_before, 0, REPFLAG_HOOKENTER, 0x600 },
+	{ "marvelalliance1_copy", &Hook_marvelalliance1_copy_after, 0, REPFLAG_HOOKENTER, 0x638 },
+	{ "marvelalliance1_copy", &Hook_marvelalliance1_copy_a1_before, 0, REPFLAG_HOOKENTER, 0x664 },
+	{ "marvelalliance1_copy", &Hook_marvelalliance1_copy_after, 0, REPFLAG_HOOKENTER, 0x69c },
+	{ "starocean_clear_framebuf", &Hook_starocean_clear_framebuf_before, 0, REPFLAG_HOOKENTER, 0 },
+	{ "starocean_clear_framebuf", &Hook_starocean_clear_framebuf_after, 0, REPFLAG_HOOKEXIT, 0 },
 	{}
 };
 
 
 static std::map<u32, u32> replacedInstructions;
-static std::map<std::string, std::vector<int> > replacementNameLookup;
+static std::unordered_map<std::string, std::vector<int> > replacementNameLookup;
 
 void Replacement_Init() {
 	for (int i = 0; i < (int)ARRAY_SIZE(entries); i++) {
@@ -1227,14 +1355,14 @@ void Replacement_Init() {
 			continue;
 		replacementNameLookup[entry->name].push_back(i);
 	}
+
+	skipGPUReplacements = 0;
 }
 
 void Replacement_Shutdown() {
 	replacedInstructions.clear();
 	replacementNameLookup.clear();
 }
-
-// TODO: Do something on load state?
 
 int GetNumReplacementFuncs() {
 	return ARRAY_SIZE(entries);

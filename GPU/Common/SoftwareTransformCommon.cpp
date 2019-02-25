@@ -15,6 +15,7 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include <cmath>
 #include "math/math_util.h"
 #include "gfx_es2/gpu_features.h"
 
@@ -92,7 +93,7 @@ static void RotateUVThrough(TransformedVertex v[4]) {
 
 // Clears on the PSP are best done by drawing a series of vertical strips
 // in clear mode. This tries to detect that.
-static bool IsReallyAClear(const TransformedVertex *transformed, int numVerts) {
+static bool IsReallyAClear(const TransformedVertex *transformed, int numVerts, float x2, float y2) {
 	if (transformed[0].x != 0.0f || transformed[0].y != 0.0f)
 		return false;
 
@@ -100,21 +101,18 @@ static bool IsReallyAClear(const TransformedVertex *transformed, int numVerts) {
 	u32 matchcolor = transformed[1].color0_32;
 	float matchz = transformed[1].z;
 
-	int bufW = gstate_c.curRTWidth;
-	int bufH = gstate_c.curRTHeight;
-
 	for (int i = 1; i < numVerts; i++) {
 		if ((i & 1) == 0) {
 			// Top left of a rectangle
-			if (transformed[i].y != 0)
+			if (transformed[i].y != 0.0f)
 				return false;
 			if (i > 0 && transformed[i].x != transformed[i - 1].x)
 				return false;
 		} else {
-			if ((i & 1) && (transformed[i].color0_32 != matchcolor || transformed[i].z != matchz))
+			if (transformed[i].color0_32 != matchcolor || transformed[i].z != matchz)
 				return false;
 			// Bottom right
-			if (transformed[i].y != bufH)
+			if (transformed[i].y < y2)
 				return false;
 			if (transformed[i].x <= transformed[i - 1].x)
 				return false;
@@ -122,10 +120,37 @@ static bool IsReallyAClear(const TransformedVertex *transformed, int numVerts) {
 	}
 
 	// The last vertical strip often extends outside the drawing area.
-	if (transformed[numVerts - 1].x < bufW)
+	if (transformed[numVerts - 1].x < x2)
 		return false;
 
 	return true;
+}
+
+static int ColorIndexOffset(int prim, GEShadeMode shadeMode, bool clearMode) {
+	if (shadeMode != GE_SHADE_FLAT || clearMode) {
+		return 0;
+	}
+
+	switch (prim) {
+	case GE_PRIM_LINES:
+	case GE_PRIM_LINE_STRIP:
+		return 1;
+
+	case GE_PRIM_TRIANGLES:
+	case GE_PRIM_TRIANGLE_STRIP:
+		return 2;
+
+	case GE_PRIM_TRIANGLE_FAN:
+		return 1;
+
+	case GE_PRIM_RECTANGLES:
+		// We already use BR color when expanding, so no need to offset.
+		return 0;
+
+	default:
+		break;
+	}
+	return 0;
 }
 
 void SoftwareTransform(
@@ -140,21 +165,11 @@ void SoftwareTransform(
 	bool throughmode = (vertType & GE_VTYPE_THROUGH_MASK) != 0;
 	bool lmode = gstate.isUsingSecondaryColor() && gstate.isLightingEnabled();
 
-	// TODO: Split up into multiple draw calls for GLES 2.0 where you can't guarantee support for more than 0x10000 verts.
-
-#if defined(MOBILE_DEVICE)
-	if (vertexCount > 0x10000/3)
-		vertexCount = 0x10000/3;
-#endif
-
 	float uscale = 1.0f;
 	float vscale = 1.0f;
-	bool scaleUV = false;
 	if (throughmode) {
 		uscale /= gstate_c.curTextureWidth;
 		vscale /= gstate_c.curTextureHeight;
-	} else {
-		scaleUV = !g_Config.bPrescaleUV;
 	}
 
 	bool skinningEnabled = vertTypeIsSkinningEnabled(vertType);
@@ -167,18 +182,18 @@ void SoftwareTransform(
 	Lighter lighter(vertType);
 	float fog_end = getFloat24(gstate.fog1);
 	float fog_slope = getFloat24(gstate.fog2);
-	// Same fixup as in ShaderManager.cpp
-	if (my_isinf(fog_slope)) {
-		// not really sure what a sensible value might be.
-		fog_slope = fog_slope < 0.0f ? -10000.0f : 10000.0f;
+	// Same fixup as in ShaderManagerGLES.cpp
+	if (my_isnanorinf(fog_end)) {
+		// Not really sure what a sensible value might be, but let's try 64k.
+		fog_end = std::signbit(fog_end) ? -65535.0f : 65535.0f;
 	}
-	if (my_isnan(fog_slope)) {
-		// Workaround for https://github.com/hrydgard/ppsspp/issues/5384#issuecomment-38365988
-		// Just put the fog far away at a large finite distance.
-		// Infinities and NaNs are rather unpredictable in shaders on many GPUs
-		// so it's best to just make it a sane calculation.
-		fog_end = 100000.0f;
-		fog_slope = 1.0f;
+	if (my_isnanorinf(fog_slope)) {
+		fog_slope = std::signbit(fog_slope) ? -65535.0f : 65535.0f;
+	}
+
+	int provokeIndOffset = 0;
+	if (params->provokeFlatFirst) {
+		provokeIndOffset = ColorIndexOffset(prim, gstate.getShadeMode(), gstate.isModeClear());
 	}
 
 	VertexReader reader(decoded, decVtxFormat, vertType);
@@ -191,7 +206,13 @@ void SoftwareTransform(
 			reader.ReadPos(vert.pos);
 
 			if (reader.hasColor0()) {
-				reader.ReadColor0_8888(vert.color0);
+				if (provokeIndOffset != 0 && index + provokeIndOffset < maxIndex) {
+					reader.Goto(index + provokeIndOffset);
+					reader.ReadColor0_8888(vert.color0);
+					reader.Goto(index);
+				} else {
+					reader.ReadColor0_8888(vert.color0);
+				}
 			} else {
 				vert.color0_32 = gstate.getMaterialAmbientRGBA();
 			}
@@ -220,17 +241,30 @@ void SoftwareTransform(
 			float uv[3] = {0, 0, 1};
 			float fogCoef = 1.0f;
 
-			// We do software T&L for now
 			float out[3];
 			float pos[3];
 			Vec3f normal(0, 0, 1);
 			Vec3f worldnormal(0, 0, 1);
 			reader.ReadPos(pos);
 
+			float ruv[2] = { 0.0f, 0.0f };
+			if (reader.hasUV())
+				reader.ReadUV(ruv);
+
+			// Read all the provoking vertex values here.
+			Vec4f unlitColor;
+			if (provokeIndOffset != 0 && index + provokeIndOffset < maxIndex)
+				reader.Goto(index + provokeIndOffset);
+			if (reader.hasColor0())
+				reader.ReadColor0(unlitColor.AsArray());
+			else
+				unlitColor = Vec4f::FromRGBA(gstate.getMaterialAmbientRGBA());
+			if (reader.hasNormal())
+				reader.ReadNrm(normal.AsArray());
+
 			if (!skinningEnabled) {
 				Vec3ByMatrix43(out, pos, gstate.worldMatrix);
 				if (reader.hasNormal()) {
-					reader.ReadNrm(normal.AsArray());
 					if (gstate.areNormalsReversed()) {
 						normal = -normal;
 					}
@@ -239,9 +273,9 @@ void SoftwareTransform(
 				}
 			} else {
 				float weights[8];
+				// TODO: For flat, are weights from the provoking used for color/normal?
+				reader.Goto(index);
 				reader.ReadWeights(weights);
-				if (reader.hasNormal())
-					reader.ReadNrm(normal.AsArray());
 
 				// Skinning
 				Vec3f psum(0, 0, 0);
@@ -271,14 +305,7 @@ void SoftwareTransform(
 				}
 			}
 
-			// Perform lighting here if enabled. don't need to check through, it's checked above.
-			Vec4f unlitColor = Vec4f(1, 1, 1, 1);
-			if (reader.hasColor0()) {
-				reader.ReadColor0(&unlitColor.x);
-			} else {
-				unlitColor = Vec4f::FromRGBA(gstate.getMaterialAmbientRGBA());
-			}
-
+			// Perform lighting here if enabled.
 			if (gstate.isLightingEnabled()) {
 				float litColor0[4];
 				float litColor1[4];
@@ -312,27 +339,20 @@ void SoftwareTransform(
 				}
 			}
 
-			float ruv[2] = {0.0f, 0.0f};
-			if (reader.hasUV())
-				reader.ReadUV(ruv);
-
 			// Perform texture coordinate generation after the transform and lighting - one style of UV depends on lights.
 			switch (gstate.getUVGenMode()) {
 			case GE_TEXMAP_TEXTURE_COORDS:	// UV mapping
 			case GE_TEXMAP_UNKNOWN: // Seen in Riviera.  Unsure of meaning, but this works.
-				// Texture scale/offset is only performed in this mode.
-				if (scaleUV) {
-					uv[0] = ruv[0]*gstate_c.uv.uScale + gstate_c.uv.uOff;
-					uv[1] = ruv[1]*gstate_c.uv.vScale + gstate_c.uv.vOff;
-				} else {
-					uv[0] = ruv[0];
-					uv[1] = ruv[1];
-				}
+				// We always prescale in the vertex decoder now.
+				uv[0] = ruv[0];
+				uv[1] = ruv[1];
 				uv[2] = 1.0f;
 				break;
 
 			case GE_TEXMAP_TEXTURE_MATRIX:
 				{
+					// TODO: What's the correct behavior with flat shading?  Provoked normal or real normal?
+
 					// Projection mapping
 					Vec3f source;
 					switch (gstate.getUVProjMode())	{
@@ -370,8 +390,23 @@ void SoftwareTransform(
 			case GE_TEXMAP_ENVIRONMENT_MAP:
 				// Shade mapping - use two light sources to generate U and V.
 				{
-					Vec3f lightpos0 = Vec3f(&lighter.lpos[gstate.getUVLS0() * 3]).Normalized();
-					Vec3f lightpos1 = Vec3f(&lighter.lpos[gstate.getUVLS1() * 3]).Normalized();
+					auto getLPosFloat = [&](int l, int i) {
+						return getFloat24(gstate.lpos[l * 3 + i]);
+					};
+					auto getLPos = [&](int l) {
+						return Vec3f(getLPosFloat(l, 0), getLPosFloat(l, 1), getLPosFloat(l, 2));
+					};
+					auto calcShadingLPos = [&](int l) {
+						Vec3f pos = getLPos(l);
+						if (pos.Length2() == 0.0f) {
+							return Vec3f(0.0f, 0.0f, 1.0f);
+						} else {
+							return pos.Normalized();
+						}
+					};
+					// Might not have lighting enabled, so don't use lighter.
+					Vec3f lightpos0 = calcShadingLPos(gstate.getUVLS0());
+					Vec3f lightpos1 = calcShadingLPos(gstate.getUVLS1());
 
 					uv[0] = (1.0f + Dot(lightpos0, worldnormal))/2.0f;
 					uv[1] = (1.0f + Dot(lightpos1, worldnormal))/2.0f;
@@ -411,15 +446,23 @@ void SoftwareTransform(
 	// rectangle out of many. Quite a small optimization though.
 	// Experiment: Disable on PowerVR (see issue #6290)
 	// TODO: This bleeds outside the play area in non-buffered mode. Big deal? Probably not.
-	if (maxIndex > 1 && gstate.isModeClear() && prim == GE_PRIM_RECTANGLES && IsReallyAClear(transformed, maxIndex) && gl_extensions.gpuVendor != GPU_VENDOR_POWERVR) {  // && g_Config.iRenderingMode != FB_NON_BUFFERED_MODE) {
+	// TODO: Allow creating a depth clear and a color draw.
+	bool reallyAClear = false;
+	if (maxIndex > 1 && prim == GE_PRIM_RECTANGLES && gstate.isModeClear() && params->allowClear) {
+		int scissorX2 = gstate.getScissorX2() + 1;
+		int scissorY2 = gstate.getScissorY2() + 1;
+		reallyAClear = IsReallyAClear(transformed, maxIndex, scissorX2, scissorY2);
+	}
+	if (reallyAClear && gl_extensions.gpuVendor != GPU_VENDOR_IMGTEC) {
 		// If alpha is not allowed to be separate, it must match for both depth/stencil and color.  Vulkan requires this.
 		bool alphaMatchesColor = gstate.isClearModeColorMask() == gstate.isClearModeAlphaMask();
 		bool depthMatchesStencil = gstate.isClearModeAlphaMask() == gstate.isClearModeDepthMask();
 		if (params->allowSeparateAlphaClear || (alphaMatchesColor && depthMatchesStencil)) {
 			result->color = transformed[1].color0_32;
 			// Need to rescale from a [0, 1] float.  This is the final transformed value.
-			result->depth = ToScaledDepth((s16)(int)(transformed[1].z * 65535.0f));
+			result->depth = ToScaledDepthFromIntegerScale((int)(transformed[1].z * 65535.0f));
 			result->action = SW_CLEAR;
+			gpuStats.numClears++;
 			return;
 		}
 	}
@@ -507,7 +550,7 @@ void SoftwareTransform(
 		const u16 *indsIn = (const u16 *)inds;
 		u16 *newInds = inds + vertexCount;
 		u16 *indsOut = newInds;
-		maxIndex = 4 * vertexCount;
+		maxIndex = 4 * (vertexCount / 2);
 		for (int i = 0; i < vertexCount; i += 2) {
 			const TransformedVertex &transVtxTL = transformed[indsIn[i + 0]];
 			const TransformedVertex &transVtxBR = transformed[indsIn[i + 1]];
@@ -570,6 +613,10 @@ void SoftwareTransform(
 				result->stencilValue = 0;
 			}
 		}
+	}
+
+	if (gstate.isModeClear()) {
+		gpuStats.numClears++;
 	}
 
 	result->action = SW_DRAW_PRIMITIVES;

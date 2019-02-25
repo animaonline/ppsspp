@@ -15,6 +15,8 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "ppsspp_config.h"
+
 #include "Common/FileUtil.h"
 #include "Common/StringUtils.h"
 #include "Common/ChunkFile.h"
@@ -42,7 +44,7 @@ VirtualDiscFileSystem::VirtualDiscFileSystem(IHandleAllocator *_hAlloc, std::str
 	: basePath(_basePath),currentBlockIndex(0) {
 
 #ifdef _WIN32
-		if (!endsWith(basePath, "\\"))
+		if (!endsWith(basePath, "\\") && !endsWith(basePath, "/"))
 			basePath = basePath + "\\";
 #else
 		if (!endsWith(basePath, "/"))
@@ -102,19 +104,28 @@ void VirtualDiscFileSystem::LoadFileListIndex() {
 			continue;
 		}
 
+		filename_pos++;
+		// Strip any slash prefix.
+		while (filename_pos < line.length() && line[filename_pos] == '/') {
+			filename_pos++;
+		}
+
 		// Check if there's a handler specified.
 		size_t handler_pos = line.find(':', filename_pos);
 		if (handler_pos != line.npos) {
-			entry.fileName = line.substr(filename_pos + 1, handler_pos - filename_pos - 1);
+			entry.fileName = line.substr(filename_pos, handler_pos - filename_pos);
+
 			std::string handler = line.substr(handler_pos + 1);
 			size_t trunc = handler.find_last_not_of("\r\n");
 			if (trunc != handler.npos && trunc != handler.size())
 				handler.resize(trunc + 1);
+
 			if (handlers.find(handler) == handlers.end())
 				handlers[handler] = new Handler(handler.c_str(), this);
-			entry.handler = handlers[handler];
+			if (handlers[handler]->IsValid())
+				entry.handler = handlers[handler];
 		} else {
-			entry.fileName = line.substr(filename_pos + 1);
+			entry.fileName = line.substr(filename_pos);
 		}
 		size_t trunc = entry.fileName.find_last_not_of("\r\n");
 		if (trunc != entry.fileName.npos && trunc != entry.fileName.size())
@@ -243,11 +254,18 @@ std::string VirtualDiscFileSystem::GetLocalPath(std::string localpath) {
 	return basePath + localpath;
 }
 
-int VirtualDiscFileSystem::getFileListIndex(std::string& fileName)
+int VirtualDiscFileSystem::getFileListIndex(std::string &fileName)
 {
+	std::string normalized;
+	if (fileName.length() >= 1 && fileName[0] == '/') {
+		normalized = fileName.substr(1);
+	} else {
+		normalized = fileName;
+	}
+
 	for (size_t i = 0; i < fileList.size(); i++)
 	{
-		if (fileList[i].fileName == fileName)
+		if (fileList[i].fileName == normalized)
 			return (int)i;
 	}
 
@@ -271,7 +289,7 @@ int VirtualDiscFileSystem::getFileListIndex(std::string& fileName)
 		return -1;
 
 	FileListEntry entry = {""};
-	entry.fileName = fileName;
+	entry.fileName = normalized;
 	entry.totalSize = File::GetFileSize(fullName);
 	entry.firstBlock = currentBlockIndex;
 	currentBlockIndex += (entry.totalSize+2047)/2048;
@@ -562,7 +580,7 @@ PSPFileInfo VirtualDiscFileSystem::GetFileInfo(std::string filename) {
 		x.isOnSectorSystem = true;
 		x.startSector = fileList[fileIndex].firstBlock;
 
-		HandlerFileHandle temp;
+		HandlerFileHandle temp = fileList[fileIndex].handler;
 		if (temp.Open(basePath, filename, FILEACCESS_READ)) {
 			x.exists = true;
 			x.size = temp.Seek(0, FILEMOVE_END);
@@ -652,7 +670,7 @@ std::vector<PSPFileInfo> VirtualDiscFileSystem::GetDirListing(std::string path)
 
 	std::string w32path = GetLocalPath(path) + "\\*.*";
 
-	hFind = FindFirstFile(ConvertUTF8ToWString(w32path).c_str(), &findData);
+	hFind = FindFirstFileEx(ConvertUTF8ToWString(w32path).c_str(), FindExInfoStandard, &findData, FindExSearchNameMatch, NULL, 0);
 
 	if (hFind == INVALID_HANDLE_VALUE) {
 		return myVector; //the empty list
@@ -792,9 +810,15 @@ void VirtualDiscFileSystem::HandlerLogger(void *arg, HandlerHandle handle, LogTy
 
 VirtualDiscFileSystem::Handler::Handler(const char *filename, VirtualDiscFileSystem *const sys) {
 #ifdef _WIN32
+#if PPSSPP_PLATFORM(UWP)
+#define dlopen(name, ignore) (void *)LoadPackagedLibrary(ConvertUTF8ToWString(name).c_str(), 0)
+#define dlsym(mod, name) GetProcAddress((HMODULE)mod, name)
+#define dlclose(mod) FreeLibrary((HMODULE)mod)
+#else
 #define dlopen(name, ignore) (void *)LoadLibrary(ConvertUTF8ToWString(name).c_str())
 #define dlsym(mod, name) GetProcAddress((HMODULE)mod, name)
 #define dlclose(mod) FreeLibrary((HMODULE)mod)
+#endif
 #endif
 
 	library = dlopen(filename, RTLD_LOCAL | RTLD_NOW);
@@ -815,6 +839,8 @@ VirtualDiscFileSystem::Handler::Handler(const char *filename, VirtualDiscFileSys
 			dlclose(library);
 			library = NULL;
 		}
+	} else {
+		ERROR_LOG(FILESYS, "Unable to load handler: %s", filename);
 	}
 #ifdef _WIN32
 #undef dlopen
@@ -827,10 +853,13 @@ VirtualDiscFileSystem::Handler::~Handler() {
 	if (library != NULL) {
 		Shutdown();
 
+#if !PPSSPP_PLATFORM(UWP)
 #ifdef _WIN32
 		FreeLibrary((HMODULE)library);
 #else
 		dlclose(library);
 #endif
+#endif
 	}
 }
+

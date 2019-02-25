@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <Filter Include="Resource Files">
@@ -28,6 +28,12 @@
     </Filter>
     <Filter Include="Windows\GE Debugger">
       <UniqueIdentifier>{15f0e146-e39c-4bad-ba10-3c714a7dbf74}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Other Platforms\Qt">
+      <UniqueIdentifier>{45191b1f-33c8-405c-a410-35fe2344d1d1}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Other Platforms\Qt\Debugger">
+      <UniqueIdentifier>{1d0cc0ee-fdbd-419e-b322-b35075d9d9db}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -82,7 +88,6 @@
     <ClCompile Include="InputDevice.cpp">
       <Filter>Windows\Input</Filter>
     </ClCompile>
-    <ClCompile Include="Globals.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="stdafx.cpp" />
     <ClCompile Include="..\android\jni\ArmEmitterTest.cpp">
@@ -139,7 +144,7 @@
     <ClCompile Include="GEDebugger\TabVertices.cpp">
       <Filter>Windows\GE Debugger</Filter>
     </ClCompile>
-    <ClCompile Include="..\ext\native\ext\glew\glew.c" />
+    <ClCompile Include="..\ext\glew\glew.c" />
     <ClCompile Include="MainWindowMenu.cpp">
       <Filter>Windows\UI</Filter>
     </ClCompile>
@@ -153,6 +158,42 @@
       <Filter>Windows\System</Filter>
     </ClCompile>
     <ClCompile Include="GPU\WindowsVulkanContext.cpp" />
+    <ClCompile Include="..\Qt\mainwindow.cpp">
+      <Filter>Other Platforms\Qt</Filter>
+    </ClCompile>
+    <ClCompile Include="GPU\D3D11Context.cpp">
+      <Filter>Windows\System</Filter>
+    </ClCompile>
+    <ClCompile Include="..\android\jni\app-android.cpp">
+      <Filter>Other Platforms</Filter>
+    </ClCompile>
+    <ClCompile Include="..\android\jni\native_audio.cpp">
+      <Filter>Other Platforms</Filter>
+    </ClCompile>
+    <ClCompile Include="..\android\jni\native-audio-so.cpp">
+      <Filter>Other Platforms</Filter>
+    </ClCompile>
+    <ClCompile Include="..\android\jni\AndroidEGLContext.cpp">
+      <Filter>Other Platforms</Filter>
+    </ClCompile>
+    <ClCompile Include="..\android\jni\AndroidJavaGLContext.cpp">
+      <Filter>Other Platforms</Filter>
+    </ClCompile>
+    <ClCompile Include="..\android\jni\AndroidVulkanContext.cpp">
+      <Filter>Other Platforms</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Qt\QtHost.cpp">
+      <Filter>Other Platforms\Qt</Filter>
+    </ClCompile>
+    <ClCompile Include="..\UWP\UWPHost.cpp">
+      <Filter>Other Platforms</Filter>
+    </ClCompile>
+    <ClCompile Include="WindowsAudio.cpp">
+      <Filter>Windows\System</Filter>
+    </ClCompile>
+    <ClCompile Include="WASAPIStream.cpp">
+      <Filter>Windows\System</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Debugger\CtrlDisAsmView.h">
@@ -191,7 +232,6 @@
     <ClInclude Include="WindowsHost.h">
       <Filter>Windows\System</Filter>
     </ClInclude>
-    <ClInclude Include="..\Globals.h" />
     <ClInclude Include="main.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="Debugger\Debugger_Disasm.h">
@@ -280,6 +320,45 @@
       <Filter>Windows\System</Filter>
     </ClInclude>
     <ClInclude Include="GPU\WindowsVulkanContext.h" />
+    <ClInclude Include="..\Qt\mainwindow.h">
+      <Filter>Other Platforms\Qt</Filter>
+    </ClInclude>
+    <ClInclude Include="GPU\D3D11Context.h">
+      <Filter>Windows\System</Filter>
+    </ClInclude>
+    <ClInclude Include="..\android\jni\app-android.h">
+      <Filter>Other Platforms</Filter>
+    </ClInclude>
+    <ClInclude Include="..\android\jni\native_audio.h">
+      <Filter>Other Platforms</Filter>
+    </ClInclude>
+    <ClInclude Include="..\android\jni\native-audio-so.h">
+      <Filter>Other Platforms</Filter>
+    </ClInclude>
+    <ClInclude Include="..\android\jni\AndroidEGLContext.h">
+      <Filter>Other Platforms</Filter>
+    </ClInclude>
+    <ClInclude Include="..\android\jni\AndroidGraphicsContext.h">
+      <Filter>Other Platforms</Filter>
+    </ClInclude>
+    <ClInclude Include="..\android\jni\AndroidJavaGLContext.h">
+      <Filter>Other Platforms</Filter>
+    </ClInclude>
+    <ClInclude Include="..\android\jni\AndroidVulkanContext.h">
+      <Filter>Other Platforms</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Qt\QtHost.h">
+      <Filter>Other Platforms\Qt</Filter>
+    </ClInclude>
+    <ClInclude Include="..\UWP\UWPHost.h">
+      <Filter>Other Platforms</Filter>
+    </ClInclude>
+    <ClInclude Include="WindowsAudio.h">
+      <Filter>Windows\System</Filter>
+    </ClInclude>
+    <ClInclude Include="WASAPIStream.h">
+      <Filter>Windows\System</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="icon1.ico">
@@ -335,10 +414,39 @@
       <Filter>Resource Files</Filter>
     </None>
     <None Include="..\assets\compat.ini" />
+    <None Include="..\Qt\Native.pro">
+      <Filter>Other Platforms\Qt</Filter>
+    </None>
+    <None Include="..\Qt\PPSSPP.pro">
+      <Filter>Other Platforms\Qt</Filter>
+    </None>
+    <None Include="..\Qt\PPSSPPQt.pro">
+      <Filter>Other Platforms\Qt</Filter>
+    </None>
+    <None Include="..\Qt\Settings.pri">
+      <Filter>Other Platforms\Qt</Filter>
+    </None>
+    <None Include="..\Qt\Common.pro">
+      <Filter>Other Platforms\Qt</Filter>
+    </None>
+    <None Include="..\Qt\Core.pro">
+      <Filter>Other Platforms\Qt</Filter>
+    </None>
+    <None Include="..\Qt\GPU.pro">
+      <Filter>Other Platforms\Qt</Filter>
+    </None>
+    <None Include="..\Qt\assets.qrc">
+      <Filter>Other Platforms\Qt</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="ppsspp.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="ppsspp_gold.ico">
+      <Filter>Resource Files</Filter>
+    </Image>
   </ItemGroup>
 </Project>

@@ -54,7 +54,8 @@ public:
 
 private:
 	void LoadFileListIndex();
-	int getFileListIndex(std::string& fileName);
+	// Warning: modifies input string.
+	int getFileListIndex(std::string &fileName);
 	int getFileListIndex(u32 accessBlock, u32 accessSize, bool blockMode = false);
 	std::string GetLocalPath(std::string localpath);
 
@@ -126,7 +127,7 @@ private:
 	typedef enum { VFILETYPE_NORMAL, VFILETYPE_LBN, VFILETYPE_ISO } VirtualFileType;
 
 	struct OpenFileEntry {
-		DirectoryFileHandle hFile;
+		DirectoryFileHandle hFile = DirectoryFileHandle::SKIP_REPLAY;
 		HandlerFileHandle handler;
 		VirtualFileType type;
 		u32 fileIndex;

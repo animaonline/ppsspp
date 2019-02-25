@@ -15,8 +15,11 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "ppsspp_config.h"
+#if PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)
+
 #include <cstring>
-#include <xmmintrin.h>
+#include <emmintrin.h>
 
 #include "Common/Log.h"
 #include "Common/x64Emitter.h"
@@ -28,17 +31,15 @@
 using namespace Gen;
 using namespace X64JitConstants;
 
-float FPURegCache::tempValues[NUM_TEMPS];
-
 FPURegCache::FPURegCache() : mips(0), initialReady(false), emit(0) {
 	memset(regs, 0, sizeof(regs));
 	memset(xregs, 0, sizeof(xregs));
 	vregs = regs + 32;
 }
 
-void FPURegCache::Start(MIPSState *mips, MIPSComp::JitState *js, MIPSComp::JitOptions *jo, MIPSAnalyst::AnalysisResults &stats) {
+void FPURegCache::Start(MIPSState *mips, MIPSComp::JitState *js, MIPSComp::JitOptions *jo, MIPSAnalyst::AnalysisResults &stats, bool useRip) {
 	this->mips = mips;
-
+	useRip_ = useRip;
 	if (!initialReady) {
 		SetupInitialRegs();
 		initialReady = true;
@@ -413,7 +414,7 @@ X64Reg FPURegCache::LoadRegsVS(const u8 *v, int n) {
 				break;
 			}
 		}
-		const float *f = v[0] < 128 ? &mips->v[voffset[v[0]]] : &tempValues[v[0] - 128];
+		const float *f = v[0] < 128 ? &mips->v[voffset[v[0]]] : &mips->tempValues[v[0] - 128];
 		if (((intptr_t)f & 0x7) == 0 && n == 2) {
 			emit->MOVQ_xmm(res, vregs[v[0]].location);
 		} else if (((intptr_t)f & 0xf) == 0) {
@@ -596,7 +597,7 @@ void FPURegCache::ReleaseSpillLock(int mipsreg) {
 void FPURegCache::ReleaseSpillLocks() {
 	for (int i = 0; i < NUM_MIPS_FPRS; i++)
 		regs[i].locked = 0;
-	for (int i = TEMP0; i < TEMP0 + NUM_TEMPS; ++i)
+	for (int i = TEMP0; i < TEMP0 + NUM_X86_FPU_TEMPS; ++i)
 		DiscardR(i);
 }
 
@@ -608,14 +609,11 @@ void FPURegCache::MapReg(const int i, bool doLoad, bool makeDirty) {
 	if (!regs[i].away) {
 		// Reg is at home in the memory register file. Let's pull it out.
 		X64Reg xr = GetFreeXReg();
-		_assert_msg_(JIT, xr >= 0 && xr < NUM_X_FPREGS, "WTF - FPURegCache::MapReg - invalid reg %d", (int)xr);
+		_assert_msg_(JIT, xr < NUM_X_FPREGS, "WTF - FPURegCache::MapReg - invalid reg %d", (int)xr);
 		xregs[xr].mipsReg = i;
 		xregs[xr].dirty = makeDirty;
 		OpArg newloc = ::Gen::R(xr);
 		if (doLoad)	{
-			if (!regs[i].location.IsImm() && (regs[i].location.offset & 0x3)) {
-				PanicAlert("WARNING - misaligned fp register location %i", i);
-			}
 			emit->MOVSS(xr, regs[i].location);
 		}
 		regs[i].location = newloc;
@@ -655,7 +653,7 @@ void FPURegCache::StoreFromRegister(int i) {
 
 	if (regs[i].away) {
 		X64Reg xr = regs[i].location.GetSimpleReg();
-		_assert_msg_(JIT, xr >= 0 && xr < NUM_X_FPREGS, "WTF - FPURegCache::StoreFromRegister - invalid reg: x %i (mr: %i). PC=%08x", (int)xr, i, js_->compilerPC);
+		_assert_msg_(JIT, xr < NUM_X_FPREGS, "WTF - FPURegCache::StoreFromRegister - invalid reg: x %i (mr: %i). PC=%08x", (int)xr, i, js_->compilerPC);
 		if (regs[i].lane != 0) {
 			const int *mri = xregs[xr].mipsRegs;
 			int seq = 1;
@@ -672,7 +670,7 @@ void FPURegCache::StoreFromRegister(int i) {
 				}
 			}
 
-			const float *f = mri[0] - 32 < 128 ? &mips->v[voffset[mri[0] - 32]] : &tempValues[mri[0] - 32 - 128];
+			const float *f = mri[0] - 32 < 128 ? &mips->v[voffset[mri[0] - 32]] : &mips->tempValues[mri[0] - 32 - 128];
 			int align = (intptr_t)f & 0xf;
 
 			// If we can do a multistore...
@@ -738,7 +736,7 @@ void FPURegCache::DiscardR(int i) {
 	_assert_msg_(JIT, !regs[i].location.IsImm(), "FPU can't handle imm yet.");
 	if (regs[i].away) {
 		X64Reg xr = regs[i].location.GetSimpleReg();
-		_assert_msg_(JIT, xr >= 0 && xr < NUM_X_FPREGS, "DiscardR: MipsReg had bad X64Reg");
+		_assert_msg_(JIT, xr < NUM_X_FPREGS, "DiscardR: MipsReg had bad X64Reg");
 		// Note that we DO NOT write it back here. That's the whole point of Discard.
 		if (regs[i].lane != 0) {
 			// But we can't just discard all of them in SIMD, just the one lane.
@@ -783,7 +781,7 @@ void FPURegCache::DiscardVS(int vreg) {
 	if (vregs[vreg].away) {
 		_assert_msg_(JIT, vregs[vreg].lane != 0, "VS expects a SIMD reg.");
 		X64Reg xr = vregs[vreg].location.GetSimpleReg();
-		_assert_msg_(JIT, xr >= 0 && xr < NUM_X_FPREGS, "DiscardR: MipsReg had bad X64Reg");
+		_assert_msg_(JIT, xr < NUM_X_FPREGS, "DiscardR: MipsReg had bad X64Reg");
 		// Note that we DO NOT write it back here. That's the whole point of Discard.
 		for (int i = 0; i < 4; ++i) {
 			int mr = xregs[xr].mipsRegs[i];
@@ -808,7 +806,7 @@ bool FPURegCache::IsTempX(X64Reg xr) {
 
 int FPURegCache::GetTempR() {
 	pendingFlush = true;
-	for (int r = TEMP0; r < TEMP0 + NUM_TEMPS; ++r) {
+	for (int r = TEMP0; r < TEMP0 + NUM_X86_FPU_TEMPS; ++r) {
 		if (!regs[r].away && !regs[r].tempLocked) {
 			regs[r].tempLocked = true;
 			return r;
@@ -825,7 +823,7 @@ int FPURegCache::GetTempVS(u8 *v, VectorSize vsz) {
 
 	// Let's collect regs as we go, but try for n free in a row.
 	int found = 0;
-	for (int r = TEMP0; r <= TEMP0 + NUM_TEMPS - n; ++r) {
+	for (int r = TEMP0; r <= TEMP0 + NUM_X86_FPU_TEMPS - n; ++r) {
 		if (regs[r].away || regs[r].tempLocked) {
 			continue;
 		}
@@ -891,11 +889,21 @@ void FPURegCache::Flush() {
 
 OpArg FPURegCache::GetDefaultLocation(int reg) const {
 	if (reg < 32) {
+		// Smaller than RIP addressing since we can use a byte offset.
 		return MDisp(CTXREG, reg * 4);
 	} else if (reg < 32 + 128) {
-		return M(&mips->v[voffset[reg - 32]]);
+		// Here, RIP has the advantage so let's use it when possible
+		if (useRip_) {
+			return M(&mips->v[voffset[reg - 32]]);  // rip accessible
+		} else {
+			return MIPSSTATE_VAR_ELEM32(v[0], voffset[reg - 32]);
+		}
 	} else {
-		return M(&tempValues[reg - 32 - 128]);
+		if (useRip_) {
+			return M(&mips->tempValues[reg - 32 - 128]);  // rip accessible
+		} else {
+			return MIPSSTATE_VAR_ELEM32(tempValues[0], reg - 32 - 128);
+		}
 	}
 }
 
@@ -1101,3 +1109,5 @@ void FPURegCache::RestoreState(const FPURegCacheState& state) {
 	memcpy(xregs, state.xregs, sizeof(xregs));
 	pendingFlush = true;
 }
+
+#endif // PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)

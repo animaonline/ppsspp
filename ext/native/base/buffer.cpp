@@ -13,6 +13,11 @@
 #include <unistd.h>
 #endif
 
+#ifndef MSG_NOSIGNAL
+// Default value to 0x00 (do nothing) in systems where it's not supported.
+#define MSG_NOSIGNAL 0x00
+#endif
+
 #include "base/logging.h"
 #include "base/timeutil.h"
 #include "file/fd_util.h"
@@ -141,9 +146,13 @@ bool Buffer::FlushToFile(const char *filename) {
 	return true;
 }
 
-bool Buffer::FlushSocket(uintptr_t sock) {
+bool Buffer::FlushSocket(uintptr_t sock, double timeout) {
 	for (size_t pos = 0, end = data_.size(); pos < end; ) {
-		int sent = send(sock, &data_[pos], (int)(end - pos), 0);
+		if (timeout >= 0.0 && !fd_util::WaitUntilReady(sock, timeout, true)) {
+			ELOG("FlushSocket timed out");
+			return false;
+		}
+		int sent = send(sock, &data_[pos], (int)(end - pos), MSG_NOSIGNAL);
 		if (sent < 0) {
 			ELOG("FlushSocket failed");
 			return false;
@@ -151,7 +160,7 @@ bool Buffer::FlushSocket(uintptr_t sock) {
 		pos += sent;
 
 		// Buffer full, don't spin.
-		if (sent == 0) {
+		if (sent == 0 && timeout < 0.0) {
 			sleep_ms(1);
 		}
 	}
@@ -183,7 +192,7 @@ bool Buffer::ReadAll(int fd, int hintSize) {
 	return true;
 }
 
-bool Buffer::ReadAllWithProgress(int fd, int knownSize, float *progress) {
+bool Buffer::ReadAllWithProgress(int fd, int knownSize, float *progress, bool *cancelled) {
 	std::vector<char> buf;
 	if (knownSize >= 65536 * 16) {
 		buf.resize(65536);
@@ -195,6 +204,8 @@ bool Buffer::ReadAllWithProgress(int fd, int knownSize, float *progress) {
 
 	int total = 0;
 	while (true) {
+		if (cancelled && *cancelled)
+			return false;
 		int retval = recv(fd, &buf[0], (int)buf.size(), 0);
 		if (retval == 0) {
 			return true;

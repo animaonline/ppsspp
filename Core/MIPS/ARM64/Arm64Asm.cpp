@@ -15,6 +15,9 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "ppsspp_config.h"
+#if PPSSPP_ARCH(ARM64)
+
 #include "base/logging.h"
 
 #include "Core/MemMap.h"
@@ -94,7 +97,9 @@ namespace MIPSComp {
 using namespace Arm64JitConstants;
 
 void Arm64Jit::GenerateFixedCode(const JitOptions &jo) {
-	const u8 *start = AlignCode16();
+	const u8 *start = AlignCodePage();
+	BeginWrite();
+
 	if (jo.useStaticAlloc) {
 		saveStaticRegisters = AlignCode16();
 		STR(INDEX_UNSIGNED, DOWNCOUNTREG, CTXREG, offsetof(MIPSState, downcount));
@@ -165,22 +170,12 @@ void Arm64Jit::GenerateFixedCode(const JitOptions &jo) {
 	updateRoundingMode = AlignCode16(); {
 		LDR(INDEX_UNSIGNED, SCRATCH2, CTXREG, offsetof(MIPSState, fcr31));
 
+		// Set SCRATCH2 to FZ:RM (FZ is bit 24, and RM are lowest 2 bits.)
 		TSTI2R(SCRATCH2, 1 << 24);
 		ANDI2R(SCRATCH2, SCRATCH2, 3);
 		FixupBranch skip = B(CC_EQ);
 		ADDI2R(SCRATCH2, SCRATCH2, 4);
 		SetJumpTarget(skip);
-
-		PUSH(SCRATCH2);
-		// We can only skip if the rounding mode is zero and flush is not set.
-		// TODO: This actually seems to compare against 3??
-		CMPI2R(SCRATCH2, 0);
-		FixupBranch skip2 = B(CC_EQ);
-		MOVI2R(SCRATCH2, 1);
-		MOVP2R(SCRATCH1_64, &js.hasSetRounding);
-		STRB(INDEX_UNSIGNED, SCRATCH2, SCRATCH1_64, 0);
-		SetJumpTarget(skip2);
-		POP(SCRATCH2);
 
 		// Let's update js.currentRoundingFunc with the right convertS0ToSCRATCH1 func.
 		MOVP2R(SCRATCH1_64, convertS0ToSCRATCH1);
@@ -193,10 +188,9 @@ void Arm64Jit::GenerateFixedCode(const JitOptions &jo) {
 
 	enterDispatcher = AlignCode16();
 
-	BitSet32 regs_to_save(Arm64Gen::ALL_CALLEE_SAVED);
-	BitSet32 regs_to_save_fp(Arm64Gen::ALL_CALLEE_SAVED_FP);
-	ABI_PushRegisters(regs_to_save);
-	fp.ABI_PushRegisters(regs_to_save_fp);
+	uint32_t regs_to_save = Arm64Gen::ALL_CALLEE_SAVED;
+	uint32_t regs_to_save_fp = Arm64Gen::ALL_CALLEE_SAVED_FP;
+	fp.ABI_PushRegisters(regs_to_save, regs_to_save_fp);
 
 	// Fixed registers, these are always kept when in Jit context.
 	MOVP2R(MEMBASEREG, Memory::base);
@@ -213,13 +207,15 @@ void Arm64Jit::GenerateFixedCode(const JitOptions &jo) {
 		QuickCallFunction(SCRATCH1_64, &CoreTiming::Advance);
 		ApplyRoundingMode(true);
 		LoadStaticRegisters();
-		FixupBranch skipToRealDispatch = B(); //skip the sync and compare first time
+		FixupBranch skipToCoreStateCheck = B();  //skip the downcount check
 
 		dispatcherCheckCoreState = GetCodePtr();
 
 		// The result of slice decrementation should be in flags if somebody jumped here
 		// IMPORTANT - We jump on negative, not carry!!!
 		FixupBranch bailCoreState = B(CC_MI);
+
+		SetJumpTarget(skipToCoreStateCheck);
 
 		MOVP2R(SCRATCH1_64, &coreState);
 		LDR(INDEX_UNSIGNED, SCRATCH1, SCRATCH1_64, 0);
@@ -238,7 +234,6 @@ void Arm64Jit::GenerateFixedCode(const JitOptions &jo) {
 			// IMPORTANT - We jump on negative, not carry!!!
 			FixupBranch bail = B(CC_MI);
 
-			SetJumpTarget(skipToRealDispatch);
 			SetJumpTarget(skipToRealDispatch2);
 
 			dispatcherNoCheck = GetCodePtr();
@@ -280,13 +275,11 @@ void Arm64Jit::GenerateFixedCode(const JitOptions &jo) {
 		B(CC_EQ, outerLoop);
 
 	SetJumpTarget(badCoreState);
-	breakpointBailout = GetCodePtr();
 
 	SaveStaticRegisters();
 	RestoreRoundingMode(true);
 
-	fp.ABI_PopRegisters(regs_to_save_fp);
-	ABI_PopRegisters(regs_to_save);
+	fp.ABI_PopRegisters(regs_to_save, regs_to_save_fp);
 
 	RET();
 
@@ -314,8 +307,14 @@ void Arm64Jit::GenerateFixedCode(const JitOptions &jo) {
 		}
 	}
 
+	// Let's spare the pre-generated code from unprotect-reprotect.
+	AlignCodePage();
+	jitStartOffset = (int)(GetCodePtr() - start);
 	// Don't forget to zap the instruction cache! This must stay at the end of this function.
 	FlushIcache();
+	EndWrite();
 }
 
 }  // namespace MIPSComp
+
+#endif // PPSSPP_ARCH(ARM64)

@@ -15,9 +15,9 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include "base/mutex.h"
+#include <atomic>
+#include <mutex>
 
-#include "Globals.h" // only for clamp_s16
 #include "Common/CommonTypes.h"
 #include "Common/ChunkFile.h"
 #include "Common/FixedSizeQueue.h"
@@ -32,6 +32,13 @@
 #include "Core/Host.h"
 #include "Core/MemMapHelpers.h"
 #include "Core/Reporting.h"
+#include "Core/System.h"
+#ifndef MOBILE_DEVICE
+#include "Core/WaveFile.h"
+#include "Core/ELF/ParamSFO.h"
+#include "Core/HLE/sceKernelTime.h"
+#include "StringUtils.h"
+#endif
 #include "Core/HLE/__sceAudio.h"
 #include "Core/HLE/sceAudio.h"
 #include "Core/HLE/sceKernel.h"
@@ -44,8 +51,7 @@ AudioDebugStats g_AudioDebugStats;
 
 // Should be used to lock anything related to the outAudioQueue.
 // atomic locks are used on the lock. TODO: make this lock-free
-atomic_flag atomicLock_;
-recursive_mutex mutex_;
+std::atomic_flag atomicLock_;
 
 enum latency {
 	LOW_LATENCY = 0,
@@ -54,7 +60,7 @@ enum latency {
 };
 
 int eventAudioUpdate = -1;
-int eventHostAudioUpdate = -1; 
+int eventHostAudioUpdate = -1;
 int mixFrequency = 44100;
 
 const int hwSampleRate = 44100;
@@ -66,6 +72,11 @@ static int audioIntervalCycles;
 static int audioHostIntervalCycles;
 
 static s32 *mixBuffer;
+static s16 *clampedMixBuffer;
+#ifndef MOBILE_DEVICE
+WaveFileWriter g_wave_writer;
+static bool m_logAudio;
+#endif
 
 // High and low watermarks, basically.  For perfect emulation, the correct values are 0 and 1, respectively.
 // TODO: Tweak. Hm, there aren't actually even used currently...
@@ -130,6 +141,7 @@ void __AudioInit() {
 		chans[i].clear();
 
 	mixBuffer = new s32[hwBlockSize * 2];
+	clampedMixBuffer = new s16[hwBlockSize * 2];
 	memset(mixBuffer, 0, hwBlockSize * 2 * sizeof(s32));
 
 	resampler.Clear();
@@ -148,6 +160,7 @@ void __AudioDoState(PointerWrap &p) {
 
 	p.Do(mixFrequency);
 
+	// TODO: This never happens because maxVer=1.
 	if (s >= 2) {
 		resampler.DoState(p);
 	} else {
@@ -173,10 +186,17 @@ void __AudioDoState(PointerWrap &p) {
 
 void __AudioShutdown() {
 	delete [] mixBuffer;
+	delete [] clampedMixBuffer;
 
 	mixBuffer = 0;
 	for (u32 i = 0; i < PSP_AUDIO_CHANNEL_MAX + 1; i++)
 		chans[i].clear();
+
+#ifndef MOBILE_DEVICE
+	if (g_Config.bDumpAudio) {
+		__StopLogAudio();
+	}
+#endif
 }
 
 u32 __AudioEnqueue(AudioChannel &chan, int chanNum, bool blocking) {
@@ -312,7 +332,7 @@ void __AudioSetOutputFrequency(int freq) {
 // Mix samples from the various audio channels into a single sample queue.
 // This single sample queue is where __AudioMix should read from. If the sample queue is full, we should
 // just sleep the main emulator thread a little.
-void __AudioUpdate() {
+void __AudioUpdate(bool resetRecording) {
 	// Audio throttle doesn't really work on the PSP since the mixing intervals are so closely tied
 	// to the CPU. Much better to throttle the frame rate on frame display and just throw away audio
 	// if the buffer somehow gets full.
@@ -364,13 +384,47 @@ void __AudioUpdate() {
 
 	if (g_Config.bEnableSound) {
 		resampler.PushSamples(mixBuffer, hwBlockSize);
+#ifndef MOBILE_DEVICE
+		if (g_Config.bSaveLoadResetsAVdumping && resetRecording) {
+			__StopLogAudio();
+			std::string discID = g_paramSFO.GetDiscID();
+			std::string audio_file_name = StringFromFormat("%s%s_%s.wav", GetSysDirectory(DIRECTORY_AUDIO).c_str(), discID.c_str(), KernelTimeNowFormatted().c_str()).c_str();
+			INFO_LOG(COMMON, "Restarted audio recording to: %s", audio_file_name.c_str());
+			if (!File::Exists(GetSysDirectory(DIRECTORY_AUDIO)))
+				File::CreateDir(GetSysDirectory(DIRECTORY_AUDIO));
+			File::CreateEmptyFile(audio_file_name);
+			__StartLogAudio(audio_file_name);
+		}
+		if (!m_logAudio) {
+			if (g_Config.bDumpAudio) {
+				// Use gameID_EmulatedTimestamp for filename
+				std::string discID = g_paramSFO.GetDiscID();
+				std::string audio_file_name = StringFromFormat("%s%s_%s.wav", GetSysDirectory(DIRECTORY_AUDIO).c_str(), discID.c_str(), KernelTimeNowFormatted().c_str()).c_str();
+				INFO_LOG(COMMON,"Recording audio to: %s", audio_file_name.c_str());
+				// Create the path just in case it doesn't exist
+				if (!File::Exists(GetSysDirectory(DIRECTORY_AUDIO)))
+					File::CreateDir(GetSysDirectory(DIRECTORY_AUDIO));
+				File::CreateEmptyFile(audio_file_name);
+				__StartLogAudio(audio_file_name);
+			}
+		} else {
+			if (g_Config.bDumpAudio) {
+				for (int i = 0; i < hwBlockSize * 2; i++) {
+					clampedMixBuffer[i] = clamp_s16(mixBuffer[i]);
+				}
+				g_wave_writer.AddStereoSamples(clampedMixBuffer, hwBlockSize);
+			} else {
+				__StopLogAudio();
+			}
+		}
+#endif
 	}
 }
 
 // numFrames is number of stereo frames.
 // This is called from *outside* the emulator thread.
 int __AudioMix(short *outstereo, int numFrames, int sampleRate) {
-    return resampler.Mix(outstereo, numFrames, false, sampleRate);
+	return resampler.Mix(outstereo, numFrames, false, sampleRate);
 }
 
 const AudioDebugStats *__AudioGetDebugStats() {
@@ -384,4 +438,30 @@ void __PushExternalAudio(const s32 *audio, int numSamples) {
 	} else {
 		resampler.Clear();
 	}
+}
+#ifndef MOBILE_DEVICE
+void __StartLogAudio(const std::string& filename) {
+	if (!m_logAudio) {
+		m_logAudio = true;
+		g_wave_writer.Start(filename, 44100);
+		g_wave_writer.SetSkipSilence(false);
+		NOTICE_LOG(SCEAUDIO, "Starting Audio logging");
+	} else {
+		WARN_LOG(SCEAUDIO, "Audio logging has already been started");
+	}
+}
+
+void __StopLogAudio() {
+	if (m_logAudio)	{
+		m_logAudio = false;
+		g_wave_writer.Stop();
+		NOTICE_LOG(SCEAUDIO, "Stopping Audio logging");
+	} else {
+		WARN_LOG(SCEAUDIO, "Audio logging has already been stopped");
+	}
+}
+#endif
+
+void WAVDump::Reset() {
+	__AudioUpdate(true);
 }

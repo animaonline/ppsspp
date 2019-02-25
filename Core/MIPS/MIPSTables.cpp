@@ -28,8 +28,9 @@
 #include "Core/CoreTiming.h"
 #include "Core/Reporting.h"
 #include "Core/Debugger/Breakpoints.h"
+#include "base/logging.h"
 
-#include "JitCommon/NativeJit.h"
+#include "JitCommon/JitCommon.h"
 
 enum MipsEncoding {
 	Imme,
@@ -81,17 +82,7 @@ struct MIPSInstruction {
 #define ENCODING(a) {a}
 #define INSTR(name, comp, dis, inter, flags) {Instruc, name, comp, dis, inter, MIPSInfo(flags)}
 
-#ifdef ARM
-#define JITFUNC(f) (&ArmJit::f)
-#elif defined(ARM64)
-#define JITFUNC(f) (&Arm64Jit::f)
-#elif defined(_M_X64) || defined(_M_IX86)
-#define JITFUNC(f) (&Jit::f)
-#elif defined(MIPS)
-#define JITFUNC(f) (&MipsJit::f)
-#else
-#define JITFUNC(f) (&FakeJit::f)
-#endif
+#define JITFUNC(f) (&MIPSFrontendInterface::f)
 
 using namespace MIPSDis;
 using namespace MIPSInt;
@@ -533,8 +524,8 @@ const MIPSInstruction tableVFPU0[8] = // 011000 xxx ....... . ....... . .......
 {
 	INSTR("vadd", JITFUNC(Comp_VecDo3), Dis_VectorSet3, Int_VecDo3, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INSTR("vsub", JITFUNC(Comp_VecDo3), Dis_VectorSet3, Int_VecDo3, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
-	// TODO: Flags may not be correct (prefixes, etc.)
-	INSTR("vsbn", JITFUNC(Comp_Generic), Dis_VectorSet3, Int_Vsbn, IN_OTHER|OUT_OTHER|IS_VFPU),
+	// TODO: Disasm is wrong.
+	INSTR("vsbn", JITFUNC(Comp_Generic), Dis_VectorSet3, Int_Vsbn, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INVALID, INVALID, INVALID, INVALID,
 
 	INSTR("vdiv", JITFUNC(Comp_VecDo3), Dis_VectorSet3, Int_VecDo3, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
@@ -586,20 +577,18 @@ const MIPSInstruction tableVFPU4Jump[32] = // 110100 xxxxx ..... . ....... . ...
 	INVALID,
 	INVALID,
 	//24 - 110100 11 ........ . ....... . .......
-	// TODO: Flags may not be correct (prefixes, etc.)
-	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU),
-	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU),
-	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU),
-	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU),
-	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU),
-	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU),
-	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU),
-	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU),
+	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
+	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
+	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
+	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
+	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
+	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
+	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
+	INSTR("vwbn.s", JITFUNC(Comp_Generic), Dis_Vwbn, Int_Vwbn, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 };
 
 const MIPSInstruction tableVFPU7[32] = // 110100 00001 xxxxx . ....... . .......
 {
-	// TODO disasm
 	INSTR("vrnds", JITFUNC(Comp_Generic), Dis_Vrnds, Int_Vrnds, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INSTR("vrndi", JITFUNC(Comp_Generic), Dis_VrndX, Int_VrndX, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INSTR("vrndf1", JITFUNC(Comp_Generic), Dis_VrndX, Int_VrndX, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
@@ -608,9 +597,7 @@ const MIPSInstruction tableVFPU7[32] = // 110100 00001 xxxxx . ....... . .......
 	INVALID, INVALID, INVALID, INVALID,
 	//8
 	INVALID, INVALID, INVALID, INVALID,
-	// TODO: Flags may not be correct (prefixes, etc.)  Is this the correct encoding?  Others say 10110.
-	INSTR("vsbz", JITFUNC(Comp_Generic), Dis_Generic, Int_Vsbz, IN_OTHER|OUT_OTHER|IS_VFPU),
-	INVALID, INVALID, INVALID,
+	INVALID, INVALID, INVALID, INVALID,
 	//16
 	INVALID,
 	INVALID,
@@ -619,9 +606,8 @@ const MIPSInstruction tableVFPU7[32] = // 110100 00001 xxxxx . ....... . .......
 
 	INVALID,
 	INVALID,
-	INVALID,
-	// TODO: Flags may not be correct (prefixes, etc.)
-	INSTR("vlgb", JITFUNC(Comp_Generic), Dis_Generic, Int_Vlgb, IN_OTHER|OUT_OTHER|IS_VFPU),
+	INSTR("vsbz", JITFUNC(Comp_Generic), Dis_Generic, Int_Vsbz, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
+	INSTR("vlgb", JITFUNC(Comp_Generic), Dis_Generic, Int_Vlgb, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	//24
 	INSTR("vuc2i", JITFUNC(Comp_Vx2i), Dis_Vs2i, Int_Vx2i, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),  // Seen in BraveStory, initialization  110100 00001110000 000 0001 0000 0000
 	INSTR("vc2i",  JITFUNC(Comp_Vx2i), Dis_Vs2i, Int_Vx2i, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
@@ -740,23 +726,18 @@ const MIPSInstruction tableVFPUMatrixSet1[16] = // 111100 11100 .xxxx . ....... 
 
 const MIPSInstruction tableVFPU9[32] = // 110100 00010 xxxxx . ....... . .......
 {
-	// TODO: Flags may not be correct (prefixes, etc.)
-	INSTR("vsrt1", JITFUNC(Comp_Generic), Dis_Vbfy, Int_Vsrt1, IN_OTHER|OUT_OTHER|IS_VFPU),
-	// TODO: Flags may not be correct (prefixes, etc.)
-	INSTR("vsrt2", JITFUNC(Comp_Generic), Dis_Vbfy, Int_Vsrt2, IN_OTHER|OUT_OTHER|IS_VFPU),
+	INSTR("vsrt1", JITFUNC(Comp_Generic), Dis_Vbfy, Int_Vsrt1, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
+	INSTR("vsrt2", JITFUNC(Comp_Generic), Dis_Vbfy, Int_Vsrt2, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INSTR("vbfy1", JITFUNC(Comp_Vbfy), Dis_Vbfy, Int_Vbfy, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INSTR("vbfy2", JITFUNC(Comp_Vbfy), Dis_Vbfy, Int_Vbfy, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	//4
 	INSTR("vocp", JITFUNC(Comp_Vocp), Dis_Vbfy, Int_Vocp, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),  // one's complement
 	INSTR("vsocp", JITFUNC(Comp_Generic), Dis_Vbfy, Int_Vsocp, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INSTR("vfad", JITFUNC(Comp_Vhoriz), Dis_Vfad, Int_Vfad, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
-	// TODO: Flags may not be correct (prefixes, etc.)
-	INSTR("vavg", JITFUNC(Comp_Vhoriz), Dis_Vfad, Int_Vavg, IN_OTHER|OUT_OTHER|IS_VFPU),
+	INSTR("vavg", JITFUNC(Comp_Vhoriz), Dis_Vfad, Int_Vavg, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	//8
-	// TODO: Flags may not be correct (prefixes, etc.)
-	INSTR("vsrt3", JITFUNC(Comp_Generic), Dis_Vbfy, Int_Vsrt3, IN_OTHER|OUT_OTHER|IS_VFPU),
-	// TODO: Flags may not be correct (prefixes, etc.)
-	INSTR("vsrt4", JITFUNC(Comp_Generic), Dis_Vbfy, Int_Vsrt4, IN_OTHER|OUT_OTHER|IS_VFPU),
+	INSTR("vsrt3", JITFUNC(Comp_Generic), Dis_Vbfy, Int_Vsrt3, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
+	INSTR("vsrt4", JITFUNC(Comp_Generic), Dis_Vbfy, Int_Vsrt4, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INSTR("vsgn", JITFUNC(Comp_Vsgn), Dis_Vbfy, Int_Vsgn, IN_OTHER|OUT_OTHER|IS_VFPU|OUT_EAT_PREFIX),
 	INVALID,
 	//12
@@ -766,9 +747,7 @@ const MIPSInstruction tableVFPU9[32] = // 110100 00010 xxxxx . ....... . .......
 	INVALID,
 
 	//16
-	// TODO: Flags may not be correct (prefixes, etc.)
 	INSTR("vmfvc", JITFUNC(Comp_Vmfvc), Dis_Vmftvc, Int_Vmfvc, IN_OTHER|IN_VFPU_CC|OUT_OTHER|IS_VFPU),
-	// TODO: Flags may not be correct (prefixes, etc.)
 	INSTR("vmtvc", JITFUNC(Comp_Vmtvc), Dis_Vmftvc, Int_Vmtvc, IN_OTHER|OUT_VFPU_CC|OUT_OTHER|IS_VFPU),
 	INVALID,
 	INVALID,
@@ -921,20 +900,19 @@ const MIPSInstruction *MIPSGetInstruction(MIPSOpcode op) {
 	return instr;
 }
 
-void MIPSCompileOp(MIPSOpcode op) {
+void MIPSCompileOp(MIPSOpcode op, MIPSComp::MIPSFrontendInterface *jit) {
 	if (op == 0)
 		return;
 	const MIPSInstruction *instr = MIPSGetInstruction(op);
 	const MIPSInfo info = MIPSGetInfo(op);
 	if (instr) {
 		if (instr->compile) {
-			(MIPSComp::jit->*(instr->compile))(op);
+			(jit->*(instr->compile))(op);
 		} else {
 			ERROR_LOG_REPORT(CPU,"MIPSCompileOp %08x failed",op.encoding);
 		}
-
 		if (info & OUT_EAT_PREFIX)
-			MIPSComp::jit->EatPrefix();
+			jit->EatPrefix();
 	} else {
 		ERROR_LOG_REPORT(CPU, "MIPSCompileOp: Invalid instruction %08x", op.encoding);
 	}
@@ -987,6 +965,7 @@ int MIPSInterpret_RunUntil(u64 globalTicks)
 	while (coreState == CORE_RUNNING)
 	{
 		CoreTiming::Advance();
+		u32 lastPC = 0;
 
 		// NEVER stop in a delay slot!
 		while (curMips->downcount >= 0 && coreState == CORE_RUNNING)
@@ -1025,6 +1004,17 @@ int MIPSInterpret_RunUntil(u64 globalTicks)
 
 				bool wasInDelaySlot = curMips->inDelaySlot;
 
+				/*
+				if (curMips->pc != lastPC + 4) {
+					if (blockCount > 0) {
+						MIPSState *mips_ = curMips;
+						fprintf(f, "BLOCK : %08x v0: %08x v1: %08x a0: %08x s0: %08x s4: %08x\n", mips_->pc, mips_->r[MIPS_REG_V0], mips_->r[MIPS_REG_V1], mips_->r[MIPS_REG_A0], mips_->r[MIPS_REG_S0], mips_->r[MIPS_REG_S4]);
+						fflush(f);
+						blockCount--;
+					}
+				}
+				lastPC = curMips->pc;
+				*/
 				MIPSInterpret(op);
 
 				if (curMips->inDelaySlot)
@@ -1050,13 +1040,6 @@ int MIPSInterpret_RunUntil(u64 globalTicks)
 	}
 
 	return 1;
-}
-
-static inline void DelayBranchTo(MIPSState *curMips, u32 where)
-{
-	curMips->pc += 4;
-	curMips->nextPC = where;
-	curMips->inDelaySlot = true;
 }
 
 const char *MIPSGetName(MIPSOpcode op)

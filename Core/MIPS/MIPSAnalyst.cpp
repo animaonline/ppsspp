@@ -16,15 +16,19 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include <map>
-#include <unordered_map>
 #include <set>
-#include "base/mutex.h"
+#include <unordered_map>
+#include <unordered_set>
+#include <mutex>
+
+#include "base/timeutil.h"
 #include "ext/cityhash/city.h"
 #include "Common/FileUtil.h"
 #include "Core/Config.h"
 #include "Core/MemMap.h"
 #include "Core/System.h"
 #include "Core/MIPS/MIPS.h"
+#include "Core/MIPS/MIPSVFPUUtils.h"
 #include "Core/MIPS/MIPSTables.h"
 #include "Core/MIPS/MIPSAnalyst.h"
 #include "Core/MIPS/MIPSCodeUtils.h"
@@ -38,16 +42,11 @@ using namespace MIPSCodeUtils;
 // Not in a namespace because MSVC's debugger doesn't like it
 typedef std::vector<MIPSAnalyst::AnalyzedFunction> FunctionsVector;
 static FunctionsVector functions;
-recursive_mutex functions_lock;
+std::recursive_mutex functions_lock;
 
 // One function can appear in multiple copies in memory, and they will all have 
 // the same hash and should all be replaced if possible.
-#ifdef __SYMBIAN32__
-// Symbian does not have a functional unordered_multimap.
-static std::multimap<u64, MIPSAnalyst::AnalyzedFunction *> hashToFunction;
-#else
 static std::unordered_multimap<u64, MIPSAnalyst::AnalyzedFunction *> hashToFunction;
-#endif
 
 struct HashMapFunc {
 	char name[64];
@@ -58,9 +57,22 @@ struct HashMapFunc {
 	bool operator < (const HashMapFunc &other) const {
 		return hash < other.hash || (hash == other.hash && size < other.size);
 	}
+
+	bool operator == (const HashMapFunc &other) const {
+		return hash == other.hash && size == other.size;
+	}
 };
 
-static std::set<HashMapFunc> hashMap;
+namespace std {
+	template <>
+	struct hash<HashMapFunc> {
+		size_t operator()(const HashMapFunc &f) const {
+			return std::hash<u64>()(f.hash) ^ f.size;
+		}
+	};
+}
+
+static std::unordered_set<HashMapFunc> hashMap;
 
 static std::string hashmapFileName;
 
@@ -178,6 +190,7 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0x3840f5766fada4b1, 592, "dissidia_recordframe_avi", }, // Dissidia (US), Dissidia 012 (US)
 	{ 0x388043e96b0e11fd, 144, "dl_write_material_2", },
 	{ 0x38f19bc3be215acc, 388, "log10f", },
+	{ 0x3913b81ddcbe1efe, 880, "katamari_render_check", }, // Me and My Katamari (US)
 	{ 0x393047f06eceaba1, 96, "strcspn", },
 	{ 0x39a651942a0b3861, 204, "tan", },
 	{ 0x3a3bc2b20a55bf02, 68, "memchr", },
@@ -323,6 +336,7 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0x95bd33ac373c019a, 24, "fabsf", },
 	{ 0x9705934b0950d68d, 280, "dl_write_framebuffer_ptr", },
 	{ 0x9734cf721bc0f3a1, 732, "atanf", },
+	{ 0x99b85c5fce389911, 408, "mytranwars_upload_frame", }, // Mytran Wars
 	{ 0x99c9288185c352ea, 592, "orenoimouto_download_frame_2", }, // Ore no Imouto ga Konnani Kawaii Wake ga Nai
 	{ 0x9a06b9d5c16c4c20, 76, "dl_write_clut_ptrload", },
 	{ 0x9b88b739267d189e, 88, "strrchr", },
@@ -332,6 +346,7 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0x9e6ce11f9d49f954, 292, "memcpy", }, // Jeanne d'Arc (US)
 	{ 0x9f269daa6f0da803, 128, "dl_write_scissor_region", },
 	{ 0x9f7919eeb43982b0, 208, "__fixdfsi", },
+	{ 0xa1c9b0a2c71235bf, 1752, "marvelalliance1_copy" }, // Marvel Ultimate Alliance 1 (EU)
 	{ 0xa1ca0640f11182e7, 72, "strcspn", },
 	{ 0xa243486be51ce224, 272, "cosf", },
 	{ 0xa2bcef60a550a3ef, 92, "matrix_rot_z", },
@@ -368,6 +383,7 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0xb0ef265e87899f0a, 32, "vector_divide_t_s", },
 	{ 0xb183a37baa12607b, 32, "vscl_t", },
 	{ 0xb1a3e60a89af9857, 20, "fabs", },
+	{ 0xb25670ff47b4843d, 232, "starocean_clear_framebuf" },
 	{ 0xb3fef47fb27d57c9, 44, "vector_scale_t", },
 	{ 0xb43fd5078ae78029, 84, "send_commandi_stall", },
 	{ 0xb43ffbd4dc446dd2, 324, "atan2f", },
@@ -426,6 +442,7 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0xd76d1a8804c7ec2c, 100, "dl_write_material", },
 	{ 0xd7d350c0b33a4662, 28, "vadd_q", },
 	{ 0xd80051931427dca0, 116, "__subdf3", },
+	{ 0xd96ba6e4ff86f1bf, 276, "katamari_screenshot_to_565", }, // Me and My Katamari (US)
 	{ 0xda51dab503b06979, 32, "vmidt_q", },
 	{ 0xdc0cc8b400ecfbf2, 36, "strcmp", },
 	{ 0xdcab869acf2bacab, 292, "strncasecmp", },
@@ -579,6 +596,41 @@ namespace MIPSAnalyst {
 		return (op & MIPSTABLE_IMM_MASK) == 0xF8000000;
 	}
 
+	int OpMemoryAccessSize(u32 pc) {
+		const auto op = Memory::Read_Instruction(pc, true);
+		MIPSInfo info = MIPSGetInfo(op);
+		if ((info & (IN_MEM | OUT_MEM)) == 0) {
+			return 0;
+		}
+
+		// TODO: Verify lwl/lwr/etc.?
+		switch (info & MEMTYPE_MASK) {
+		case MEMTYPE_BYTE:
+			return 1;
+		case MEMTYPE_HWORD:
+			return 2;
+		case MEMTYPE_WORD:
+		case MEMTYPE_FLOAT:
+			return 4;
+		case MEMTYPE_VQUAD:
+			return 16;
+		}
+
+		return 0;
+	}
+
+	bool IsOpMemoryWrite(u32 pc) {
+		const auto op = Memory::Read_Instruction(pc, true);
+		MIPSInfo info = MIPSGetInfo(op);
+		return (info & OUT_MEM) != 0;
+	}
+
+	bool OpHasDelaySlot(u32 pc) {
+		const auto op = Memory::Read_Instruction(pc, true);
+		MIPSInfo info = MIPSGetInfo(op);
+		return (info & DELAYSLOT) != 0;
+	}
+
 	bool OpWouldChangeMemory(u32 pc, u32 addr, u32 size) {
 		const auto op = Memory::Read_Instruction(pc, true);
 
@@ -693,16 +745,16 @@ namespace MIPSAnalyst {
 	}
 	
 	void Reset() {
-		lock_guard guard(functions_lock);
+		std::lock_guard<std::recursive_mutex> guard(functions_lock);
 		functions.clear();
 		hashToFunction.clear();
 	}
 
 	void UpdateHashToFunctionMap() {
-		lock_guard guard(functions_lock);
+		std::lock_guard<std::recursive_mutex> guard(functions_lock);
 		hashToFunction.clear();
 		// Really need to detect C++11 features with better defines.
-#if !defined(__SYMBIAN32__) && !defined(IOS)
+#if !defined(IOS)
 		hashToFunction.reserve(functions.size());
 #endif
 		for (auto iter = functions.begin(); iter != functions.end(); iter++) {
@@ -821,18 +873,21 @@ namespace MIPSAnalyst {
 	}
 
 	void HashFunctions() {
-		lock_guard guard(functions_lock);
+		std::lock_guard<std::recursive_mutex> guard(functions_lock);
 		std::vector<u32> buffer;
 
 		for (auto iter = functions.begin(), end = functions.end(); iter != end; iter++) {
 			AnalyzedFunction &f = *iter;
+			if (!Memory::IsValidRange(f.start, f.end - f.start + 4)) {
+				continue;
+			}
 
 			// This is unfortunate.  In case of emuhacks or relocs, we have to make a copy.
 			buffer.resize((f.end - f.start + 4) / 4);
 			size_t pos = 0;
 			for (u32 addr = f.start; addr <= f.end; addr += 4) {
 				u32 validbits = 0xFFFFFFFF;
-				MIPSOpcode instr = Memory::Read_Instruction(addr, true);
+				MIPSOpcode instr = Memory::ReadUnchecked_Instruction(addr, true);
 				if (MIPS_IS_EMUHACK(instr)) {
 					f.hasHash = false;
 					goto skip;
@@ -851,6 +906,32 @@ namespace MIPSAnalyst {
 skip:
 			;
 		}
+	}
+
+	void PrecompileFunction(u32 startAddr, u32 length) {
+		// Direct calls to this ignore the bPreloadFunctions flag, since it's just for stubs.
+		if (MIPSComp::jit) {
+			MIPSComp::jit->CompileFunction(startAddr, length);
+		}
+	}
+
+	void PrecompileFunctions() {
+		if (!g_Config.bPreloadFunctions) {
+			return;
+		}
+		std::lock_guard<std::recursive_mutex> guard(functions_lock);
+
+		// TODO: Load from cache file if available instead.
+
+		double st = real_time_now();
+		for (auto iter = functions.begin(), end = functions.end(); iter != end; iter++) {
+			const AnalyzedFunction &f = *iter;
+
+			PrecompileFunction(f.start, f.end - f.start + 4);
+		}
+		double et = real_time_now();
+
+		NOTICE_LOG(JIT, "Precompiled %d MIPS functions in %0.2f milliseconds", (int)functions.size(), (et - st) * 1000.0);
 	}
 
 	static const char *DefaultFunctionName(char buffer[256], u32 startAddr) {
@@ -937,8 +1018,8 @@ skip:
 		return furthestJumpbackAddr;
 	}
 
-	void ScanForFunctions(u32 startAddr, u32 endAddr, bool insertSymbols) {
-		lock_guard guard(functions_lock);
+	bool ScanForFunctions(u32 startAddr, u32 endAddr, bool insertSymbols) {
+		std::lock_guard<std::recursive_mutex> guard(functions_lock);
 
 		AnalyzedFunction currentFunction = {startAddr};
 
@@ -1073,8 +1154,10 @@ skip:
 			}
 		}
 
-		currentFunction.end = addr + 4;
-		functions.push_back(currentFunction);
+		if (addr <= endAddr) {
+			currentFunction.end = addr + 4;
+			functions.push_back(currentFunction);
+		}
 
 		for (auto iter = functions.begin(); iter != functions.end(); iter++) {
 			iter->size = iter->end - iter->start + 4;
@@ -1084,6 +1167,10 @@ skip:
 			}
 		}
 
+		return insertSymbols;
+	}
+
+	void FinalizeScan(bool insertSymbols) {
 		HashFunctions();
 
 		std::string hashMapFilename = GetSysDirectory(DIRECTORY_SYSTEM) + "knownfuncs.ini";
@@ -1103,7 +1190,7 @@ skip:
 	}
 
 	void RegisterFunction(u32 startAddr, u32 size, const char *name) {
-		lock_guard guard(functions_lock);
+		std::lock_guard<std::recursive_mutex> guard(functions_lock);
 
 		// Check if we have this already
 		for (auto iter = functions.begin(); iter != functions.end(); iter++) {
@@ -1136,7 +1223,7 @@ skip:
 	}
 
 	void ForgetFunctions(u32 startAddr, u32 endAddr) {
-		lock_guard guard(functions_lock);
+		std::lock_guard<std::recursive_mutex> guard(functions_lock);
 
 		// It makes sense to forget functions as modules are unloaded but it breaks
 		// the easy way of saving a hashmap by unloading and loading a game. I added
@@ -1173,7 +1260,7 @@ skip:
 	}
 
 	void ReplaceFunctions() {
-		lock_guard guard(functions_lock);
+		std::lock_guard<std::recursive_mutex> guard(functions_lock);
 
 		for (size_t i = 0; i < functions.size(); i++) {
 			WriteReplaceInstructions(functions[i].start, functions[i].hash, functions[i].size);
@@ -1181,7 +1268,7 @@ skip:
 	}
 
 	void UpdateHashMap() {
-		lock_guard guard(functions_lock);
+		std::lock_guard<std::recursive_mutex> guard(functions_lock);
 
 		for (auto it = functions.begin(), end = functions.end(); it != end; ++it) {
 			const AnalyzedFunction &f = *it;
@@ -1328,6 +1415,7 @@ skip:
 		memset(&info, 0, sizeof(info));
 
 		if (!Memory::IsValidAddress(address)) {
+			info.opcodeAddress = address;
 			return info;
 		}
 
@@ -1443,7 +1531,7 @@ skip:
 		}
 
 		// lw, sh, ...
-		if ((opInfo & IN_MEM) || (opInfo & OUT_MEM)) {
+		if (!IsSyscall(op) && (opInfo & (IN_MEM | OUT_MEM)) != 0) {
 			info.isDataAccess = true;
 			switch (opInfo & MEMTYPE_MASK) {
 			case MEMTYPE_BYTE:

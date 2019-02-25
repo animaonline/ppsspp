@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
       <Configuration>Debug</Configuration>
@@ -21,32 +21,34 @@
   <PropertyGroup Label="Globals">
     <ProjectGuid>{533F1D30-D04D-47CC-AD71-20F658907E36}</ProjectGuid>
     <RootNamespace>Core</RootNamespace>
+    <WindowsTargetPlatformVersion>
+    </WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v140_xp</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)_xp</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v140_xp</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)_xp</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <WholeProgramOptimization>false</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v140_xp</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)_xp</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>StaticLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <CharacterSet>Unicode</CharacterSet>
-    <PlatformToolset>v140_xp</PlatformToolset>
+    <PlatformToolset>$(DefaultPlatformToolset)_xp</PlatformToolset>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -68,7 +70,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <AdditionalIncludeDirectories>..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86\include;../common;..;../ext/native;../ext/native/ext/glew;../ext/zlib;../ext/native/ext</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/zlib;../ext/native/ext</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_CRTDBG_MAP_ALLOC;USING_WIN_UI;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WIN32;_ARCH_32=1;_M_IX86=1;_DEBUG;_LIB;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
       <FloatingPointModel>Fast</FloatingPointModel>
@@ -76,8 +78,8 @@
       <MinimalRebuild>false</MinimalRebuild>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
-      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <ForcedIncludeFiles>Common/DbgNew.h</ForcedIncludeFiles>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -90,7 +92,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>
-      <AdditionalIncludeDirectories>..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86_64\include;../common;..;../ext/native;../ext/native/ext/glew;../ext/zlib;../ext/native/ext</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86_64\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/zlib;../ext/native/ext</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_CRTDBG_MAP_ALLOC;USING_WIN_UI;_CRT_SECURE_NO_WARNINGS;USE_FFMPEG;WIN32;_ARCH_64=1;_M_X64=1;_DEBUG;_LIB;_UNICODE;UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
       <FloatingPointModel>Fast</FloatingPointModel>
@@ -99,8 +101,8 @@
       <MinimalRebuild>false</MinimalRebuild>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
       <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
-      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <ForcedIncludeFiles>Common/DbgNew.h</ForcedIncludeFiles>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -116,7 +118,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <AdditionalIncludeDirectories>..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86\include;../common;..;../ext/native;../ext/native/ext/glew;../ext/zlib;../ext/native/ext</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/zlib;../ext/native/ext</AdditionalIncludeDirectories>
       <BufferSecurityCheck>false</BufferSecurityCheck>
       <EnableEnhancedInstructionSet>StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
       <FloatingPointModel>Fast</FloatingPointModel>
@@ -146,7 +148,7 @@
       <Optimization>MaxSpeed</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <AdditionalIncludeDirectories>..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86_64\include;../common;..;../ext/native;../ext/native/ext/glew;../ext/zlib;../ext/native/ext</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\ffmpeg\WindowsInclude;..\ffmpeg\Windows\x86_64\include;../common;..;../ext/native;../ext/glew;../ext/snappy;../ext/zlib;../ext/native/ext</AdditionalIncludeDirectories>
       <EnableEnhancedInstructionSet>NotSet</EnableEnhancedInstructionSet>
       <FloatingPointModel>Fast</FloatingPointModel>
       <BufferSecurityCheck>false</BufferSecurityCheck>
@@ -181,6 +183,38 @@
     <ClCompile Include="..\ext\udis86\syn-intel.c" />
     <ClCompile Include="..\ext\udis86\syn.c" />
     <ClCompile Include="..\ext\udis86\udis86.c" />
+    <ClCompile Include="AVIDump.cpp" />
+    <ClCompile Include="Debugger\WebSocket.cpp" />
+    <ClCompile Include="Debugger\WebSocket\BreakpointSubscriber.cpp" />
+    <ClCompile Include="Debugger\WebSocket\CPUCoreSubscriber.cpp" />
+    <ClCompile Include="Debugger\WebSocket\GameBroadcaster.cpp" />
+    <ClCompile Include="Debugger\WebSocket\GameSubscriber.cpp" />
+    <ClCompile Include="Debugger\WebSocket\GPUBufferSubscriber.cpp" />
+    <ClCompile Include="Debugger\WebSocket\GPURecordSubscriber.cpp" />
+    <ClCompile Include="Debugger\WebSocket\HLESubscriber.cpp" />
+    <ClCompile Include="Debugger\WebSocket\LogBroadcaster.cpp" />
+    <ClCompile Include="Debugger\WebSocket\DisasmSubscriber.cpp" />
+    <ClCompile Include="Debugger\WebSocket\SteppingBroadcaster.cpp" />
+    <ClCompile Include="Debugger\WebSocket\SteppingSubscriber.cpp" />
+    <ClCompile Include="Debugger\WebSocket\WebSocketUtils.cpp" />
+    <ClCompile Include="FileSystems\BlobFileSystem.cpp" />
+    <ClCompile Include="HLE\KUBridge.cpp" />
+    <ClCompile Include="HLE\sceUsbAcc.cpp" />
+    <ClCompile Include="HLE\sceUsbCam.cpp" />
+    <ClCompile Include="MIPS\IR\IRAsm.cpp" />
+    <ClCompile Include="MIPS\IR\IRCompALU.cpp" />
+    <ClCompile Include="MIPS\IR\IRCompBranch.cpp" />
+    <ClCompile Include="MIPS\IR\IRCompFPU.cpp" />
+    <ClCompile Include="MIPS\IR\IRCompLoadStore.cpp" />
+    <ClCompile Include="MIPS\IR\IRCompVFPU.cpp" />
+    <ClCompile Include="MIPS\IR\IRFrontend.cpp" />
+    <ClCompile Include="MIPS\IR\IRInst.cpp" />
+    <ClCompile Include="MIPS\IR\IRInterpreter.cpp" />
+    <ClCompile Include="MIPS\IR\IRJit.cpp" />
+    <ClCompile Include="MIPS\IR\IRPassSimplify.cpp" />
+    <ClCompile Include="MIPS\IR\IRRegCache.cpp" />
+    <ClCompile Include="Replay.cpp" />
+    <ClCompile Include="TextureReplacer.cpp" />
     <ClCompile Include="Compatibility.cpp" />
     <ClCompile Include="Config.cpp" />
     <ClCompile Include="Core.cpp" />
@@ -217,7 +251,10 @@
     <ClCompile Include="FileSystems\VirtualDiscFileSystem.cpp" />
     <ClCompile Include="Font\PGF.cpp" />
     <ClCompile Include="HDRemaster.cpp" />
-    <ClCompile Include="HLE\HLE.cpp" />
+    <ClCompile Include="HLE\HLE.cpp">
+      <Optimization Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">MaxSpeed</Optimization>
+      <BasicRuntimeChecks Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Default</BasicRuntimeChecks>
+    </ClCompile>
     <ClCompile Include="HLE\HLEHelperThread.cpp" />
     <ClCompile Include="HLE\HLETables.cpp" />
     <ClCompile Include="HLE\proAdhoc.cpp" />
@@ -487,6 +524,8 @@
       <InlineFunctionExpansion Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">AnySuitable</InlineFunctionExpansion>
       <InlineFunctionExpansion Condition="'$(Configuration)|$(Platform)'=='Release|x64'">AnySuitable</InlineFunctionExpansion>
     </ClCompile>
+    <ClCompile Include="WaveFile.cpp" />
+    <ClCompile Include="WebServer.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\ext\disarm.h" />
@@ -506,6 +545,34 @@
     <ClInclude Include="..\ext\udis86\types.h" />
     <ClInclude Include="..\ext\udis86\udint.h" />
     <ClInclude Include="..\ext\udis86\udis86.h" />
+    <ClInclude Include="AVIDump.h" />
+    <ClInclude Include="ConfigValues.h" />
+    <ClInclude Include="Debugger\WebSocket.h" />
+    <ClInclude Include="Debugger\WebSocket\BreakpointSubscriber.h" />
+    <ClInclude Include="Debugger\WebSocket\GameSubscriber.h" />
+    <ClInclude Include="Debugger\WebSocket\DisasmSubscriber.h" />
+    <ClInclude Include="Debugger\WebSocket\GPUBufferSubscriber.h" />
+    <ClInclude Include="Debugger\WebSocket\GPURecordSubscriber.h" />
+    <ClInclude Include="Debugger\WebSocket\HLESubscriber.h" />
+    <ClInclude Include="Debugger\WebSocket\SteppingSubscriber.h" />
+    <ClInclude Include="Debugger\WebSocket\WebSocketUtils.h" />
+    <ClInclude Include="Debugger\WebSocket\CPUCoreSubscriber.h" />
+    <ClInclude Include="Debugger\WebSocket\GameBroadcaster.h" />
+    <ClInclude Include="Debugger\WebSocket\LogBroadcaster.h" />
+    <ClInclude Include="Debugger\WebSocket\SteppingBroadcaster.h" />
+    <ClInclude Include="FileSystems\BlobFileSystem.h" />
+    <ClInclude Include="HLE\KernelThreadDebugInterface.h" />
+    <ClInclude Include="HLE\KUBridge.h" />
+    <ClInclude Include="HLE\sceUsbAcc.h" />
+    <ClInclude Include="HLE\sceUsbCam.h" />
+    <ClInclude Include="MIPS\IR\IRFrontend.h" />
+    <ClInclude Include="MIPS\IR\IRInst.h" />
+    <ClInclude Include="MIPS\IR\IRInterpreter.h" />
+    <ClInclude Include="MIPS\IR\IRJit.h" />
+    <ClInclude Include="MIPS\IR\IRPassSimplify.h" />
+    <ClInclude Include="MIPS\IR\IRRegCache.h" />
+    <ClInclude Include="Replay.h" />
+    <ClInclude Include="TextureReplacer.h" />
     <ClInclude Include="Compatibility.h" />
     <ClInclude Include="Config.h" />
     <ClInclude Include="Core.h" />
@@ -666,7 +733,6 @@
     <ClInclude Include="MIPS\ARM\ArmRegCacheFPU.h" />
     <ClInclude Include="MIPS\JitCommon\JitBlockCache.h" />
     <ClInclude Include="MIPS\JitCommon\JitCommon.h" />
-    <ClInclude Include="MIPS\JitCommon\NativeJit.h" />
     <ClInclude Include="MIPS\JitCommon\JitState.h" />
     <ClInclude Include="MIPS\MIPS.h" />
     <ClInclude Include="MIPS\MIPSAnalyst.h" />
@@ -710,12 +776,13 @@
     <ClInclude Include="Util\PPGeDraw.h" />
     <ClInclude Include="Util\ppge_atlas.h" />
     <ClInclude Include="..\ext\xxhash.h" />
+    <ClInclude Include="WaveFile.h" />
+    <ClInclude Include="WebServer.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="..\android\jni\Android.mk" />
     <None Include="..\LICENSE.TXT" />
     <None Include="CMakeLists.txt" />
-    <None Include="GameLogNotes.txt" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Common\Common.vcxproj">

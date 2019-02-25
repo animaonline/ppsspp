@@ -176,7 +176,7 @@ struct Atrac {
 		channels_(0), outputChannels_(2), bitrate_(64), bytesPerFrame_(0), bufferMaxSize_(0), jointStereo_(0),
 		currentSample_(0), endSample_(0), firstSampleOffset_(0), dataOff_(0),
 		loopStartSample_(-1), loopEndSample_(-1), loopNum_(0),
-		failedDecode_(false), codecType_(0), ignoreDataBuf_(false),
+		failedDecode_(false), ignoreDataBuf_(false), codecType_(0),
 		bufferState_(ATRAC_STATUS_NO_DATA) {
 		memset(&first_, 0, sizeof(first_));
 		memset(&second_, 0, sizeof(second_));
@@ -434,11 +434,11 @@ struct Atrac {
 	PSPPointer<SceAtracId> context_;
 
 #ifdef USE_FFMPEG
-	AVCodecContext  *codecCtx_;
-	SwrContext      *swrCtx_;
-	AVFrame         *frame_;
+	AVCodecContext  *codecCtx_ = nullptr;
+	SwrContext      *swrCtx_ = nullptr;
+	AVFrame         *frame_ = nullptr;
+	AVPacket        *packet_ = nullptr;
 #endif // USE_FFMPEG
-	AVPacket        *packet_;
 
 #ifdef USE_FFMPEG
 	void ReleaseFFMPEGContext() {
@@ -457,19 +457,23 @@ struct Atrac {
 		avcodec_close(codecCtx_);
 		av_freep(&codecCtx_);
 #endif
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 12, 100)
+		av_packet_free(&packet_);
+#else
 		av_free_packet(packet_);
 		delete packet_;
 		packet_ = nullptr;
+#endif
 	}
 #endif // USE_FFMPEG
 
 	void ForceSeekToSample(int sample) {
 #ifdef USE_FFMPEG
 		avcodec_flush_buffers(codecCtx_);
-#endif
 
 		// Discard any pending packet data.
 		packet_->size = 0;
+#endif
 
 		currentSample_ = sample;
 	}
@@ -479,6 +483,7 @@ struct Atrac {
 	}
 
 	void SeekToSample(int sample) {
+#ifdef USE_FFMPEG
 		// Discard any pending packet data.
 		packet_->size = 0;
 
@@ -487,7 +492,6 @@ struct Atrac {
 		const u32 unalignedSamples = (offsetSamples + sample) % SamplesPerFrame();
 		int seekFrame = sample + offsetSamples - unalignedSamples;
 
-#ifdef USE_FFMPEG
 		if ((sample != currentSample_ || sample == 0) && codecCtx_ != nullptr) {
 			// Prefill the decode buffer with packets before the first sample offset.
 			avcodec_flush_buffers(codecCtx_);
@@ -520,10 +524,10 @@ struct Atrac {
 		if (off < first_.size) {
 #ifdef USE_FFMPEG
 			av_init_packet(packet_);
-#endif // USE_FFMPEG
 			packet_->data = BufferStart() + off;
 			packet_->size = std::min((u32)bytesPerFrame_, first_.size - off);
 			packet_->pos = off;
+#endif // USE_FFMPEG
 
 			return true;
 		} else {
@@ -536,11 +540,11 @@ struct Atrac {
 	bool FillLowLevelPacket(u8 *ptr) {
 #ifdef USE_FFMPEG
 		av_init_packet(packet_);
-#endif // USE_FFMPEG
 
 		packet_->data = ptr;
 		packet_->size = bytesPerFrame_;
 		packet_->pos = 0;
+#endif // USE_FFMPEG
 		return true;
 	}
 
@@ -552,7 +556,11 @@ struct Atrac {
 
 		int got_frame = 0;
 		int bytes_read = avcodec_decode_audio4(codecCtx_, frame_, &got_frame, packet_);
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 12, 100)
+		av_packet_unref(packet_);
+#else
 		av_free_packet(packet_);
+#endif
 		if (bytes_read == AVERROR_PATCHWELCOME) {
 			ERROR_LOG(ME, "Unsupported feature in ATRAC audio.");
 			// Let's try the next packet.
@@ -1836,10 +1844,14 @@ int __AtracSetContext(Atrac *atrac) {
 
 	// alloc audio frame
 	atrac->frame_ = av_frame_alloc();
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 12, 100)
+	atrac->packet_ = av_packet_alloc();
+#else
 	atrac->packet_ = new AVPacket;
 	av_init_packet(atrac->packet_);
 	atrac->packet_->data = nullptr;
 	atrac->packet_->size = 0;
+#endif
 	// reinit decodePos, because ffmpeg had changed it.
 	atrac->decodePos_ = 0;
 #endif

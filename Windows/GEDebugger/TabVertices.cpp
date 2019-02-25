@@ -26,13 +26,16 @@
 #include "GPU/Common/GPUDebugInterface.h"
 
 static const GenericListViewColumn vertexListCols[] = {
-	{ L"X", 0.17f },
-	{ L"Y", 0.17f },
-	{ L"Z", 0.17f },
-	{ L"U", 0.16f },
-	{ L"V", 0.16f },
-	{ L"Color", 0.17f },
-	// TODO: Normal, weight, morph?
+	{ L"X", 0.1f },
+	{ L"Y", 0.1f },
+	{ L"Z", 0.1f },
+	{ L"U", 0.1f },
+	{ L"V", 0.1f },
+	{ L"Color", 0.1f },
+	{ L"NX", 0.1f },
+	{ L"NY", 0.1f },
+	{ L"NZ", 0.1f },
+	// TODO: weight, morph?
 };
 
 GenericListViewDef vertexListDef = {
@@ -46,6 +49,9 @@ enum VertexListCols {
 	VERTEXLIST_COL_U,
 	VERTEXLIST_COL_V,
 	VERTEXLIST_COL_COLOR,
+	VERTEXLIST_COL_NX,
+	VERTEXLIST_COL_NY,
+	VERTEXLIST_COL_NZ,
 };
 
 static const GenericListViewColumn matrixListCols[] = {
@@ -150,24 +156,17 @@ void CtrlVertexList::GetColumnText(wchar_t *dest, int row, int col) {
 
 void CtrlVertexList::FormatVertCol(wchar_t *dest, const GPUDebugVertex &vert, int col) {
 	switch (col) {
-	case VERTEXLIST_COL_X:
-		swprintf(dest, L"%f", vert.x);
-		break;
-	case VERTEXLIST_COL_Y:
-		swprintf(dest, L"%f", vert.y);
-		break;
-	case VERTEXLIST_COL_Z:
-		swprintf(dest, L"%f", vert.z);
-		break;
-	case VERTEXLIST_COL_U:
-		swprintf(dest, L"%f", vert.u);
-		break;
-	case VERTEXLIST_COL_V:
-		swprintf(dest, L"%f", vert.v);
-		break;
+	case VERTEXLIST_COL_X: swprintf(dest, L"%f", vert.x); break;
+	case VERTEXLIST_COL_Y: swprintf(dest, L"%f", vert.y); break;
+	case VERTEXLIST_COL_Z: swprintf(dest, L"%f", vert.z); break;
+	case VERTEXLIST_COL_U: swprintf(dest, L"%f", vert.u); break;
+	case VERTEXLIST_COL_V: swprintf(dest, L"%f", vert.v); break;
 	case VERTEXLIST_COL_COLOR:
 		swprintf(dest, L"%02x%02x%02x%02x", vert.c[0], vert.c[1], vert.c[2], vert.c[3]);
 		break;
+	case VERTEXLIST_COL_NX: swprintf(dest, L"%f", vert.nx); break;
+	case VERTEXLIST_COL_NY: swprintf(dest, L"%f", vert.ny); break;
+	case VERTEXLIST_COL_NZ: swprintf(dest, L"%f", vert.nz); break;
 
 	default:
 		wcscpy(dest, L"Invalid");
@@ -188,6 +187,7 @@ void CtrlVertexList::FormatVertColRaw(wchar_t *dest, int row, int col) {
 	const u8 *pos = vert + decoder->posoff;
 	const u8 *tc = vert + decoder->tcoff;
 	const u8 *color = vert + decoder->coloff;
+	const u8 *norm = vert + decoder->nrmoff;
 
 	switch (col) {
 	case VERTEXLIST_COL_X:
@@ -208,6 +208,10 @@ void CtrlVertexList::FormatVertColRaw(wchar_t *dest, int row, int col) {
 	case VERTEXLIST_COL_COLOR:
 		FormatVertColRawColor(dest, color, decoder->col);
 		break;
+
+	case VERTEXLIST_COL_NX: FormatVertColRawType(dest, norm, decoder->nrm, 0); break;
+	case VERTEXLIST_COL_NY: FormatVertColRawType(dest, norm, decoder->nrm, 1); break;
+	case VERTEXLIST_COL_NZ: FormatVertColRawType(dest, norm, decoder->nrm, 2); break;
 
 	default:
 		wcscpy(dest, L"Invalid");
@@ -282,15 +286,17 @@ int CtrlVertexList::GetRowCount() {
 		u32 cmd = Memory::Read_U32(list.pc);
 		if ((cmd >> 24) == GE_CMD_PRIM) {
 			rowCount_ = cmd & 0xFFFF;
+		} else if ((cmd >> 24) == GE_CMD_BEZIER || (cmd >> 24) == GE_CMD_SPLINE) {
+			u32 u = (cmd & 0x00FF) >> 0;
+			u32 v = (cmd & 0xFF00) >> 8;
+			rowCount_ = u * v;
 		}
 	}
 
 	if (!gpuDebug->GetCurrentSimpleVertices(rowCount_, vertices, indices)) {
 		rowCount_ = 0;
 	}
-	VertexDecoderOptions options;
-	memset(&options, 0, sizeof(options));
-	options.expandAllUVtoFloat = false;
+	VertexDecoderOptions options{};
 	decoder->SetVertexType(state.vertType, options);
 	return rowCount_;
 }
@@ -368,7 +374,7 @@ void CtrlMatrixList::GetColumnText(wchar_t *dest, int row, int col) {
 	if (row >= MATRIXLIST_ROW_BONE_0_0) {
 		int b = (row - MATRIXLIST_ROW_BONE_0_0) / 3;
 		int r = (row - MATRIXLIST_ROW_BONE_0_0) % 3;
-		int offset = (row - MATRIXLIST_ROW_BONE_0_0) * 4 + col - 1;
+		int offset = b * 12 + r + (col - 1) * 3;
 
 		switch (col) {
 		case MATRIXLIST_COL_NAME:
@@ -381,7 +387,7 @@ void CtrlMatrixList::GetColumnText(wchar_t *dest, int row, int col) {
 		}
 	} else if (row >= MATRIXLIST_ROW_TGEN_0) {
 		int r = row - MATRIXLIST_ROW_TGEN_0;
-		int offset = r * 4 + col - 1;
+		int offset = r + (col - 1) * 4;
 
 		switch (col) {
 		case MATRIXLIST_COL_NAME:
@@ -394,7 +400,7 @@ void CtrlMatrixList::GetColumnText(wchar_t *dest, int row, int col) {
 		}
 	} else if (row >= MATRIXLIST_ROW_PROJ_0) {
 		int r = row - MATRIXLIST_ROW_PROJ_0;
-		int offset = r * 4 + col - 1;
+		int offset = r + (col - 1) * 4;
 
 		switch (col) {
 		case MATRIXLIST_COL_NAME:
@@ -407,7 +413,7 @@ void CtrlMatrixList::GetColumnText(wchar_t *dest, int row, int col) {
 		}
 	} else if (row >= MATRIXLIST_ROW_VIEW_0) {
 		int r = row - MATRIXLIST_ROW_VIEW_0;
-		int offset = r * 4 + col - 1;
+		int offset = r + (col - 1) * 3;
 
 		switch (col) {
 		case MATRIXLIST_COL_NAME:
@@ -420,7 +426,7 @@ void CtrlMatrixList::GetColumnText(wchar_t *dest, int row, int col) {
 		}
 	} else {
 		int r = row - MATRIXLIST_ROW_WORLD_0;
-		int offset = r * 4 + col - 1;
+		int offset = r + (col - 1) * 3;
 
 		switch (col) {
 		case MATRIXLIST_COL_NAME:

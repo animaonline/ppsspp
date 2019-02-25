@@ -20,12 +20,11 @@
 #include <map>
 
 #include "Common/Common.h"
-#include "Common/CommonTypes.h"
+#include "Common/Swap.h"
 
 class PointerWrap;
 
-enum
-{
+enum {
 	SCE_KERNEL_ERROR_OK                               = 0,
 	SCE_KERNEL_ERROR_ALREADY                          = 0x80000020,
 	SCE_KERNEL_ERROR_BUSY                             = 0x80000021,
@@ -45,6 +44,7 @@ enum
 	SCE_KERNEL_ERROR_BAD_FILE                         = 0x80000209,
 	SCE_KERNEL_ERROR_ACCESS_ERROR                     = 0x8000020D,
 
+	SCE_KERNEL_ERROR_ERRNO_FILE_NOT_FOUND             = 0x80010002,
 	SCE_KERNEL_ERROR_ERRNO_ARG_LIST_TOO_LONG          = 0x80010007,
 	SCE_KERNEL_ERROR_ERRNO_INVALID_FILE_DESCRIPTOR    = 0x80010009,
 	SCE_KERNEL_ERROR_ERRNO_RESOURCE_UNAVAILABLE       = 0x8001000B,
@@ -568,5 +568,4 @@ void Register_ThreadManForUser();
 void Register_ThreadManForKernel();
 void Register_LoadExecForUser();
 void Register_LoadExecForKernel();
-void Register_SysMemForKernel();
 void Register_UtilsForKernel();

@@ -85,19 +85,6 @@ int MIPS_SingleStep()
 	return 1;
 }
 
-u32 MIPS_GetNextPC()
-{
-	if (mipsr4k.inDelaySlot)
-		return mipsr4k.nextPC;
-	else
-		return mipsr4k.pc + 4;
-}
-
-void MIPS_ClearDelaySlot()
-{
-	mipsr4k.inDelaySlot = false;
-}
-
 namespace MIPSInt
 {
 	void Int_Cache(MIPSOpcode op)
@@ -388,19 +375,9 @@ namespace MIPSInt
 		{
 		case 10: if (R(rt) == 0) R(rd) = R(rs); break; //movz
 		case 11: if (R(rt) != 0) R(rd) = R(rs); break; //movn
-		case 32: 
-			if (!has_warned) {
-				ERROR_LOG(CPU,"WARNING : exception-causing add at %08x", PC);
-				has_warned = true;
-			}
-			R(rd) = R(rs) + R(rt);		break; //add
+		case 32: R(rd) = R(rs) + R(rt);		break; //add (exception on overflow)
 		case 33: R(rd) = R(rs) + R(rt);		break; //addu
-		case 34: 
-			if (!has_warned) {
-				ERROR_LOG(CPU,"WARNING : exception-causing sub at %08x", PC);
-				has_warned = true;
-			}
-			R(rd) = R(rs) - R(rt);		break; //sub
+		case 34: R(rd) = R(rs) - R(rt);		break; //sub (exception on overflow)
 		case 35: R(rd) = R(rs) - R(rt);		break; //subu
 		case 36: R(rd) = R(rs) & R(rt);		break; //and
 		case 37: R(rd) = R(rs) | R(rt);		break; //or
@@ -411,7 +388,7 @@ namespace MIPSInt
 		case 44: R(rd) = ((s32)R(rs) > (s32)R(rt)) ? R(rs) : R(rt); break; //max
 		case 45: R(rd) = ((s32)R(rs) < (s32)R(rt)) ? R(rs) : R(rt); break;//min
 		default:
-			_dbg_assert_msg_(CPU,0,"Trying to interpret instruction that can't be interpreted");
+			_dbg_assert_msg_(CPU, 0, "Unknown MIPS instruction %08x", op.encoding);
 			break;
 		}
 		PC += 4;
@@ -541,6 +518,10 @@ namespace MIPSInt
 				if (fs == 31) {
 					currentMIPS->fcr31 = value & 0x0181FFFF;
 					currentMIPS->fpcond = (value >> 23) & 1;
+					if (MIPSComp::jit) {
+						// In case of DISABLE, we need to tell jit we updated FCR31.
+						MIPSComp::jit->UpdateFCR31();
+					}
 				} else {
 					WARN_LOG_REPORT(CPU, "WriteFCR: Unexpected reg %d (value %08x)", fs, value);
 				}
@@ -673,11 +654,13 @@ namespace MIPSInt
 				s32 b = (s32)R(rt);
 				if (a == (s32)0x80000000 && b == -1) {
 					LO = 0x80000000;
+					HI = -1;
 				} else if (b != 0) {
 					LO = (u32)(a / b);
 					HI = (u32)(a % b);
 				} else {
-					LO = HI = 0;	// Not sure what the right thing to do is?
+					LO = a < 0 ? 1 : -1;
+					HI = a;
 				}
 			}
 			break;
@@ -685,12 +668,12 @@ namespace MIPSInt
 			{
 				u32 a = R(rs);
 				u32 b = R(rt);
-				if (b != 0) 
-				{
+				if (b != 0) {
 					LO = (a/b);
 					HI = (a%b);
 				} else {
-					LO = HI = 0;
+					LO = a <= 0xFFFF ? 0xFFFF : -1;
+					HI = a;
 				}
 			}
 			break;

@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <mutex>
+
 #include "net/http_client.h"
 #include "net/resolve.h"
 #include "net/url.h"
@@ -28,29 +30,32 @@ public:
 	HTTPFileLoader(const std::string &filename);
 	virtual ~HTTPFileLoader() override;
 
+	bool IsRemote() override {
+		return true;
+	}
 	virtual bool Exists() override;
+	virtual bool ExistsFast() override;
 	virtual bool IsDirectory() override;
 	virtual s64 FileSize() override;
 	virtual std::string Path() const override;
 
-	virtual void Seek(s64 absolutePos) override;
-	virtual size_t Read(size_t bytes, size_t count, void *data) override {
-		return ReadAt(filepos_, bytes, count, data);
+	virtual size_t ReadAt(s64 absolutePos, size_t bytes, size_t count, void *data, Flags flags = Flags::NONE) override {
+		return ReadAt(absolutePos, bytes * count, data, flags) / bytes;
 	}
-	virtual size_t Read(size_t bytes, void *data) override {
-		return ReadAt(filepos_, bytes, data);
+	virtual size_t ReadAt(s64 absolutePos, size_t bytes, void *data, Flags flags = Flags::NONE) override;
+
+	void Cancel() override {
+		cancelConnect_ = true;
 	}
-	virtual size_t ReadAt(s64 absolutePos, size_t bytes, size_t count, void *data) override {
-		return ReadAt(absolutePos, bytes * count, data) / bytes;
+
+	std::string LatestError() const override {
+		return latestError_;
 	}
-	virtual size_t ReadAt(s64 absolutePos, size_t bytes, void *data) override;
 
 private:
-	void Connect() {
-		if (!connected_) {
-			connected_ = client_.Connect();
-		}
-	}
+	void Prepare();
+
+	void Connect();
 
 	void Disconnect() {
 		if (connected_) {
@@ -59,11 +64,15 @@ private:
 		connected_ = false;
 	}
 
-	s64 filesize_;
-	s64 filepos_;
+	s64 filesize_ = 0;
+	s64 filepos_ = 0;
 	Url url_;
-	net::AutoInit netInit_;
 	http::Client client_;
 	std::string filename_;
-	bool connected_;
+	bool connected_ = false;
+	bool cancelConnect_ = false;
+	const char *latestError_ = "";
+
+	std::once_flag preparedFlag_;
+	std::mutex readAtMutex_;
 };

@@ -15,6 +15,9 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "ppsspp_config.h"
+#if PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)
+
 #include "Core/MIPS/MIPSCodeUtils.h"
 #include "Core/MIPS/x86/Jit.h"
 #include "Core/MIPS/x86/RegCache.h"
@@ -37,8 +40,8 @@ using namespace MIPSAnalyst;
 // All functions should have CONDITIONAL_DISABLE, so we can narrow things down to a file quickly.
 // Currently known non working ones should have DISABLE.
 
-// #define CONDITIONAL_DISABLE { Comp_Generic(op); return; }
-#define CONDITIONAL_DISABLE ;
+// #define CONDITIONAL_DISABLE(ignore) { Comp_Generic(op); return; }
+#define CONDITIONAL_DISABLE(flag) if (jo.Disabled(JitDisable::flag)) { Comp_Generic(op); return; }
 #define DISABLE { Comp_Generic(op); return; }
 
 namespace MIPSComp
@@ -71,7 +74,7 @@ namespace MIPSComp
 
 	void Jit::Comp_IType(MIPSOpcode op)
 	{
-		CONDITIONAL_DISABLE;
+		CONDITIONAL_DISABLE(ALU_IMM);
 		s32 simm = (s32)_IMM16;  // sign extension
 		u32 uimm = op & 0xFFFF;
 		u32 suimm = (u32)(s32)simm;
@@ -194,7 +197,7 @@ namespace MIPSComp
 
 	void Jit::Comp_RType2(MIPSOpcode op)
 	{
-		CONDITIONAL_DISABLE;
+		CONDITIONAL_DISABLE(ALU_BIT);
 		MIPSGPReg rs = _RS;
 		MIPSGPReg rd = _RD;
 
@@ -375,7 +378,7 @@ namespace MIPSComp
 
 	void Jit::Comp_RType3(MIPSOpcode op)
 	{
-		CONDITIONAL_DISABLE
+		CONDITIONAL_DISABLE(ALU);
 
 		MIPSGPReg rt = _RT;
 		MIPSGPReg rs = _RS;
@@ -665,7 +668,7 @@ namespace MIPSComp
 
 	void Jit::Comp_ShiftType(MIPSOpcode op)
 	{
-		CONDITIONAL_DISABLE;
+		CONDITIONAL_DISABLE(ALU);
 		int rs = (op>>21) & 0x1F;
 		MIPSGPReg rd = _RD;
 		int fd = (op>>6) & 0x1F;
@@ -693,7 +696,7 @@ namespace MIPSComp
 
 	void Jit::Comp_Special3(MIPSOpcode op)
 	{
-		CONDITIONAL_DISABLE;
+		CONDITIONAL_DISABLE(ALU_BIT);
 		MIPSGPReg rs = _RS;
 		MIPSGPReg rt = _RT;
 
@@ -783,7 +786,7 @@ namespace MIPSComp
 
 	void Jit::Comp_Allegrex(MIPSOpcode op)
 	{
-		CONDITIONAL_DISABLE
+		CONDITIONAL_DISABLE(ALU_BIT);
 		MIPSGPReg rt = _RT;
 		MIPSGPReg rd = _RD;
 		// Don't change $zr.
@@ -891,7 +894,7 @@ namespace MIPSComp
 
 	void Jit::Comp_Allegrex2(MIPSOpcode op)
 	{
-		CONDITIONAL_DISABLE
+		CONDITIONAL_DISABLE(ALU_BIT);
 		MIPSGPReg rt = _RT;
 		MIPSGPReg rd = _RD;
 		// Don't change $zr.
@@ -935,7 +938,7 @@ namespace MIPSComp
 
 	void Jit::Comp_MulDivType(MIPSOpcode op)
 	{
-		CONDITIONAL_DISABLE;
+		CONDITIONAL_DISABLE(MULDIV);
 		MIPSGPReg rt = _RT;
 		MIPSGPReg rs = _RS;
 		MIPSGPReg rd = _RD;
@@ -1002,6 +1005,9 @@ namespace MIPSComp
 				// For CMP.
 				gpr.KillImmediate(rs, true, false);
 				gpr.KillImmediate(rt, true, false);
+
+				MOV(32, R(EAX), gpr.R(rs));
+
 				CMP(32, gpr.R(rt), Imm32(0));
 				FixupBranch divZero = J_CC(CC_E);
 
@@ -1010,14 +1016,13 @@ namespace MIPSComp
 				FixupBranch notOverflow = J_CC(CC_NE);
 				CMP(32, gpr.R(rt), Imm32((u32) -1));
 				FixupBranch notOverflow2 = J_CC(CC_NE);
-				// TODO: Should HI be set to anything?
 				MOV(32, gpr.R(MIPS_REG_LO), Imm32(0x80000000));
+				MOV(32, gpr.R(MIPS_REG_HI), Imm32(-1));
 				FixupBranch skip2 = J();
 
 				SetJumpTarget(notOverflow);
 				SetJumpTarget(notOverflow2);
 
-				MOV(32, R(EAX), gpr.R(rs));
 				CDQ();
 				IDIV(32, gpr.R(rt));
 				MOV(32, gpr.R(MIPS_REG_HI), R(EDX));
@@ -1025,10 +1030,13 @@ namespace MIPSComp
 				FixupBranch skip = J();
 
 				SetJumpTarget(divZero);
-				// TODO: Is this the right way to handle a divide by zero?
-				MOV(32, gpr.R(MIPS_REG_HI), Imm32(0));
-				MOV(32, gpr.R(MIPS_REG_LO), Imm32(0));
+				MOV(32, gpr.R(MIPS_REG_HI), R(EAX));
+				MOV(32, gpr.R(MIPS_REG_LO), Imm32(-1));
+				CMP(32, R(EAX), Imm32(0));
+				FixupBranch positiveDivZero = J_CC(CC_GE);
+				MOV(32, gpr.R(MIPS_REG_LO), Imm32(1));
 
+				SetJumpTarget(positiveDivZero);
 				SetJumpTarget(skip);
 				SetJumpTarget(skip2);
 				gpr.UnlockAllX();
@@ -1041,21 +1049,26 @@ namespace MIPSComp
 				gpr.KillImmediate(MIPS_REG_HI, false, true);
 				gpr.KillImmediate(MIPS_REG_LO, false, true);
 				gpr.KillImmediate(rt, true, false);
-				CMP(32, gpr.R(rt), Imm32(0));
-				FixupBranch divZero = J_CC(CC_E);
 
 				MOV(32, R(EAX), gpr.R(rs));
 				MOV(32, R(EDX), Imm32(0));
+
+				CMP(32, gpr.R(rt), Imm32(0));
+				FixupBranch divZero = J_CC(CC_E);
+
 				DIV(32, gpr.R(rt));
 				MOV(32, gpr.R(MIPS_REG_HI), R(EDX));
 				MOV(32, gpr.R(MIPS_REG_LO), R(EAX));
 				FixupBranch skip = J();
 
 				SetJumpTarget(divZero);
-				// TODO: Is this the right way to handle a divide by zero?
-				MOV(32, gpr.R(MIPS_REG_HI), Imm32(0));
-				MOV(32, gpr.R(MIPS_REG_LO), Imm32(0));
+				MOV(32, gpr.R(MIPS_REG_HI), R(EAX));
+				MOV(32, gpr.R(MIPS_REG_LO), Imm32(-1));
+				CMP(32, R(EAX), Imm32(0xFFFF));
+				FixupBranch moreThan16Bit = J_CC(CC_A);
+				MOV(32, gpr.R(MIPS_REG_LO), Imm32(0xFFFF));
 
+				SetJumpTarget(moreThan16Bit);
 				SetJumpTarget(skip);
 				gpr.UnlockAllX();
 			}
@@ -1113,4 +1126,6 @@ namespace MIPSComp
 			DISABLE;
 		}
 	}
-}
+} 
+
+#endif // PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)

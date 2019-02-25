@@ -5,14 +5,14 @@
 
 #include "base/display.h"
 #include "base/logging.h"
+#include "base/stringutil.h"
 #include "math/math_util.h"
 #include "gfx/texture_atlas.h"
 #include "gfx/gl_debug_log.h"
-#include "gfx/gl_common.h"
 #include "gfx_es2/draw_buffer.h"
 #include "gfx_es2/draw_text.h"
-#include "gfx_es2/glsl_program.h"
 #include "util/text/utf8.h"
+#include "util/text/wrap_text.h"
 
 enum {
 	// Enough?
@@ -30,64 +30,77 @@ DrawBuffer::~DrawBuffer() {
 	delete [] verts_;
 }
 
-void DrawBuffer::Init(Thin3DContext *t3d) {
+void DrawBuffer::Init(Draw::DrawContext *t3d, Draw::Pipeline *pipeline) {
+	using namespace Draw;
+
 	if (inited_)
 		return;
 
-	t3d_ = t3d;
+	draw_ = t3d;
 	inited_ = true;
 
-	std::vector<Thin3DVertexComponent> components;
-	components.push_back(Thin3DVertexComponent("Position", SEM_POSITION, FLOATx3, 0));
-	components.push_back(Thin3DVertexComponent("TexCoord0", SEM_TEXCOORD0, FLOATx2, 12));
-	components.push_back(Thin3DVertexComponent("Color0", SEM_COLOR0, UNORM8x4, 20));
-
-	Thin3DShader *vshader = t3d_->GetVshaderPreset(VS_TEXTURE_COLOR_2D);
-
-	vformat_ = t3d_->CreateVertexFormat(components, 24, vshader);
-	if (vformat_->RequiresBuffer()) {
-		vbuf_ = t3d_->CreateBuffer(MAX_VERTS * sizeof(Vertex), T3DBufferUsage::DYNAMIC | T3DBufferUsage::VERTEXDATA);
+	if (pipeline->RequiresBuffer()) {
+		vbuf_ = draw_->CreateBuffer(MAX_VERTS * sizeof(Vertex), BufferUsageFlag::DYNAMIC | BufferUsageFlag::VERTEXDATA);
 	} else {
 		vbuf_ = nullptr;
 	}
 }
 
+Draw::InputLayout *DrawBuffer::CreateInputLayout(Draw::DrawContext *t3d) {
+	using namespace Draw;
+	InputLayoutDesc desc = {
+		{
+			{ sizeof(Vertex), false },
+		},
+		{
+			{ 0, SEM_POSITION, DataFormat::R32G32B32_FLOAT, 0 },
+			{ 0, SEM_TEXCOORD0, DataFormat::R32G32_FLOAT, 12 },
+			{ 0, SEM_COLOR0, DataFormat::R8G8B8A8_UNORM, 20 },
+		},
+	};
+
+	return t3d->CreateInputLayout(desc);
+}
+
 void DrawBuffer::Shutdown() {
 	if (vbuf_) {
 		vbuf_->Release();
+		vbuf_ = nullptr;
 	}
-	vformat_->Release();
-
 	inited_ = false;
-}
-
-void DrawBuffer::Begin(Thin3DShaderSet *program, DrawBufferPrimitiveMode dbmode) {
-	shaderSet_ = program;
+	alphaStack_.clear();
+	drawMatrixStack_.clear();
+	pipeline_ = nullptr;
+	draw_ = nullptr;
 	count_ = 0;
-	mode_ = dbmode;
 }
 
-void DrawBuffer::End() {
-	// Currently does nothing, but call it!
+void DrawBuffer::Begin(Draw::Pipeline *program) {
+	pipeline_ = program;
+	count_ = 0;
 }
 
 void DrawBuffer::Flush(bool set_blend_state) {
-	if (!shaderSet_) {
-		ELOG("No program set!");
-		return;
-	}
-
+	using namespace Draw;
 	if (count_ == 0)
 		return;
+	if (!pipeline_) {
+		ELOG("DrawBuffer: No program set, skipping flush!");
+		count_ = 0;
+		return;
+	}
+	draw_->BindPipeline(pipeline_);
 
-	shaderSet_->SetMatrix4x4("WorldViewProj", drawMatrix_.getReadPtr());
-
+	VsTexColUB ub{};
+	memcpy(ub.WorldViewProj, drawMatrix_.getReadPtr(), sizeof(Matrix4x4));
+	draw_->UpdateDynamicUniformBuffer(&ub, sizeof(ub));
 	if (vbuf_) {
-		vbuf_->SubData((const uint8_t *)verts_, 0, sizeof(Vertex) * count_);
+		draw_->UpdateBuffer(vbuf_, (const uint8_t *)verts_, 0, sizeof(Vertex) * count_, Draw::UPDATE_DISCARD);
+		draw_->BindVertexBuffers(0, 1, &vbuf_, nullptr);
 		int offset = 0;
-		t3d_->Draw(mode_ == DBMODE_NORMAL ? PRIM_TRIANGLES : PRIM_LINES, shaderSet_, vformat_, vbuf_, count_, offset);
+		draw_->Draw(count_, offset);
 	} else {
-		t3d_->DrawUP(mode_ == DBMODE_NORMAL ? PRIM_TRIANGLES : PRIM_LINES, shaderSet_, vformat_, (const void *)verts_, count_);
+		draw_->DrawUP((const void *)verts_, count_);
 	}
 	count_ = 0;
 }
@@ -102,7 +115,7 @@ void DrawBuffer::V(float x, float y, float z, uint32_t color, float u, float v) 
 	vert->x = x;
 	vert->y = y;
 	vert->z = z;
-	vert->rgba = color;
+	vert->rgba = alpha_ == 1.0f ? color : alphaMul(color, alpha_);
 	vert->u = u;
 	vert->v = v;
 }
@@ -113,15 +126,15 @@ void DrawBuffer::Rect(float x, float y, float w, float h, uint32_t color, int al
 }
 
 void DrawBuffer::hLine(float x1, float y, float x2, uint32_t color) {
-	Rect(x1, y, x2 - x1, pixel_in_dps, color);
+	Rect(x1, y, x2 - x1, pixel_in_dps_y, color);
 }
 
 void DrawBuffer::vLine(float x, float y1, float y2, uint32_t color) {
-	Rect(x, y1, pixel_in_dps, y2 - y1, color);
+	Rect(x, y1, pixel_in_dps_x, y2 - y1, color);
 }
 
 void DrawBuffer::vLineAlpha50(float x, float y1, float y2, uint32_t color) {
-	Rect(x, y1, pixel_in_dps, y2 - y1, (color | 0xFF000000) & 0x7F000000);
+	Rect(x, y1, pixel_in_dps_x, y2 - y1, (color | 0xFF000000) & 0x7F000000);
 }
 
 void DrawBuffer::RectVGradient(float x, float y, float w, float h, uint32_t colorTop, uint32_t colorBottom) {
@@ -134,11 +147,11 @@ void DrawBuffer::RectVGradient(float x, float y, float w, float h, uint32_t colo
 }
 
 void DrawBuffer::RectOutline(float x, float y, float w, float h, uint32_t color, int align) {
-	hLine(x, y, x + w + pixel_in_dps, color);
-	hLine(x, y + h, x + w + pixel_in_dps, color);
+	hLine(x, y, x + w + pixel_in_dps_x, color);
+	hLine(x, y + h, x + w + pixel_in_dps_x, color);
 
-	vLine(x, y, y + h + pixel_in_dps, color);
-	vLine(x + w, y, y + h + pixel_in_dps, color);
+	vLine(x, y, y + h + pixel_in_dps_y, color);
+	vLine(x + w, y, y + h + pixel_in_dps_y, color);
 }
 
 void DrawBuffer::MultiVGradient(float x, float y, float w, float h, GradientStop *stops, int numStops) {
@@ -331,6 +344,36 @@ void DrawBuffer::DrawImage2GridH(ImageID atlas_image, float x1, float y1, float 
 	DrawTexRect(xb, y1, x2, y2, um, v1, u2, v2, color);
 }
 
+class AtlasWordWrapper : public WordWrapper {
+public:
+	// Note: maxW may be height if rotated.
+	AtlasWordWrapper(const AtlasFont &atlasfont, float scale, const char *str, float maxW) : WordWrapper(str, maxW), atlasfont_(atlasfont), scale_(scale) {
+	}
+
+protected:
+	float MeasureWidth(const char *str, size_t bytes) override;
+
+	const AtlasFont &atlasfont_;
+	const float scale_;
+};
+
+float AtlasWordWrapper::MeasureWidth(const char *str, size_t bytes) {
+	float w = 0.0f;
+	for (UTF8 utf(str); utf.byteIndex() < (int)bytes; ) {
+		uint32_t c = utf.next();
+		if (c == '&') {
+			// Skip ampersand prefixes ("&&" is an ampersand.)
+			c = utf.next();
+		}
+		const AtlasChar *ch = atlasfont_.getChar(c);
+		if (!ch)
+			ch = atlasfont_.getChar('?');
+
+		w += ch->wx * scale_;
+	}
+	return w;
+}
+
 void DrawBuffer::MeasureTextCount(int font, const char *text, int count, float *w, float *h) {
 	const AtlasFont &atlasfont = *atlas->fonts[font];
 
@@ -348,12 +391,13 @@ void DrawBuffer::MeasureTextCount(int font, const char *text, int count, float *
 		// Translate non-breaking space to space.
 		if (cval == 0xA0) {
 			cval = ' ';
-		}
-		if (cval == '\n') {
+		} else if (cval == '\n') {
 			maxX = std::max(maxX, wacc);
 			wacc = 0;
 			lines++;
 			continue;
+		} else if (cval == '\t') {
+			cval = ' ';
 		} else if (cval == '&' && utf.peek() != '&') {
 			// Ignore lone ampersands
 			continue;
@@ -365,6 +409,21 @@ void DrawBuffer::MeasureTextCount(int font, const char *text, int count, float *
 	}
 	if (w) *w = std::max(wacc, maxX);
 	if (h) *h = atlasfont.height * fontscaley * lines;
+}
+
+void DrawBuffer::MeasureTextRect(int font, const char *text, int count, const Bounds &bounds, float *w, float *h, int align) {
+	if (!text || (uint32_t)font >= (uint32_t)atlas->num_fonts) {
+		*w = 0;
+		*h = 0;
+		return;
+	}
+
+	std::string toMeasure = std::string(text, count);
+	if (align & FLAG_WRAP_TEXT) {
+		AtlasWordWrapper wrapper(*atlas->fonts[font], fontscalex, toMeasure.c_str(), bounds.w);
+		toMeasure = wrapper.Wrapped();
+	}
+	MeasureTextCount(font, toMeasure.c_str(), (int)toMeasure.length(), w, h);
 }
 
 void DrawBuffer::MeasureText(int font, const char *text, float *w, float *h) {
@@ -402,7 +461,35 @@ void DrawBuffer::DrawTextRect(int font, const char *text, float x, float y, floa
 		y += h;
 	}
 
-	DrawText(font, text, x, y, color, align);
+	std::string toDraw = text;
+	if (align & FLAG_WRAP_TEXT) {
+		AtlasWordWrapper wrapper(*atlas->fonts[font], fontscalex, toDraw.c_str(), w);
+		toDraw = wrapper.Wrapped();
+	}
+
+	float totalWidth, totalHeight;
+	MeasureTextRect(font, toDraw.c_str(), (int)toDraw.size(), Bounds(x, y, w, h), &totalWidth, &totalHeight, align);
+
+	std::vector<std::string> lines;
+	SplitString(toDraw, '\n', lines);
+
+	float baseY = y;
+	if (align & ALIGN_VCENTER) {
+		baseY -= totalHeight / 2;
+		align = align & ~ALIGN_VCENTER;
+	} else if (align & ALIGN_BOTTOM) {
+		baseY -= totalHeight;
+		align = align & ~ALIGN_BOTTOM;
+	}
+
+	// This allows each line to be horizontally centered by itself.
+	for (const std::string &line : lines) {
+		DrawText(font, line.c_str(), x, baseY, color, align);
+
+		float tw, th;
+		MeasureText(font, line.c_str(), &tw, &th);
+		baseY += th;
+	}
 }
 
 // ROTATE_* doesn't yet work right.
@@ -435,11 +522,12 @@ void DrawBuffer::DrawText(int font, const char *text, float x, float y, Color co
 		// Translate non-breaking space to space.
 		if (cval == 0xA0) {
 			cval = ' ';
-		}
-		if (cval == '\n') {
+		} else if (cval == '\n') {
 			y += atlasfont.height * fontscaley;
 			x = sx;
 			continue;
+		} else if (cval == '\t') {
+			cval = ' ';
 		} else if (cval == '&' && utf.peek() != '&') {
 			// Ignore lone ampersands
 			continue;

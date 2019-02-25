@@ -15,21 +15,29 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "ppsspp_config.h"
+
+#include "base/timeutil.h"
 #include "Common/GraphicsContext.h"
 #include "Core/Core.h"
 
 #include "GPU/GPU.h"
 #include "GPU/GPUInterface.h"
-#include "GPU/GLES/GLES_GPU.h"
-#ifndef NO_VULKAN
+
+#if PPSSPP_PLATFORM(UWP)
+#include "GPU/D3D11/GPU_D3D11.h"
+#else
+#include "GPU/GLES/GPU_GLES.h"
+
 #include "GPU/Vulkan/GPU_Vulkan.h"
-#endif
 #include "GPU/Null/NullGpu.h"
 #include "GPU/Software/SoftGpu.h"
 
 #if defined(_WIN32)
-#include "GPU/Directx9/helper/global.h"
 #include "GPU/Directx9/GPU_DX9.h"
+#include "GPU/D3D11/GPU_D3D11.h"
+#endif
+
 #endif
 
 GPUStatistics gpuStats;
@@ -46,39 +54,67 @@ static void SetGPU(T *obj) {
 #undef new
 #endif
 
-bool GPU_Init(GraphicsContext *ctx, Thin3DContext *thin3d) {
+bool GPU_IsReady() {
+	if (gpu)
+		return gpu->IsReady();
+	return false;
+}
+
+bool GPU_Init(GraphicsContext *ctx, Draw::DrawContext *draw) {
+	_assert_(draw || PSP_CoreParameter().gpuCore == GPUCORE_NULL);
+#if PPSSPP_PLATFORM(UWP)
+	SetGPU(new GPU_D3D11(ctx, draw));
+	return true;
+#else
 	switch (PSP_CoreParameter().gpuCore) {
-	case GPU_NULL:
+	case GPUCORE_NULL:
 		SetGPU(new NullGPU());
 		break;
-	case GPU_GLES:
-		SetGPU(new GLES_GPU(ctx));
+	case GPUCORE_GLES:
+		SetGPU(new GPU_GLES(ctx, draw));
 		break;
-	case GPU_SOFTWARE:
-		SetGPU(new SoftGPU(ctx, thin3d));
+	case GPUCORE_SOFTWARE:
+		SetGPU(new SoftGPU(ctx, draw));
 		break;
-	case GPU_DIRECTX9:
+	case GPUCORE_DIRECTX9:
 #if defined(_WIN32)
-		SetGPU(new DIRECTX9_GPU(ctx));
-#endif
+		SetGPU(new DIRECTX9_GPU(ctx, draw));
 		break;
-	case GPU_DIRECTX11:
+#else
 		return false;
-#ifndef NO_VULKAN
-	case GPU_VULKAN:
-		SetGPU(new GPU_Vulkan(ctx));
-		break;
 #endif
+	case GPUCORE_DIRECTX11:
+#if defined(_WIN32)
+		SetGPU(new GPU_D3D11(ctx, draw));
+		break;
+#else
+		return false;
+#endif
+	case GPUCORE_VULKAN:
+		if (!ctx) {
+			ERROR_LOG(G3D, "Unable to init Vulkan GPU backend, no context");
+			break;
+		}
+		SetGPU(new GPU_Vulkan(ctx, draw));
+		break;
 	}
 
 	return gpu != NULL;
+#endif
 }
 #ifdef USE_CRT_DBG
 #define new DBG_NEW
 #endif
 
 void GPU_Shutdown() {
+	// Wait for IsReady, since it might be running on a thread.
+	if (gpu) {
+		gpu->CancelReady();
+		while (!gpu->IsReady()) {
+			sleep_ms(10);
+		}
+	}
 	delete gpu;
-	gpu = 0;
-	gpuDebug = 0;
+	gpu = nullptr;
+	gpuDebug = nullptr;
 }

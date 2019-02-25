@@ -60,11 +60,7 @@ private:
 };
 
 
-// Call at start of frame
-void UIBegin(Thin3DShaderSet *shaderSet);
-
-// Call at end of frame.
-
-void UIEnd();
+// Begins/flushes the two UI drawbuffers together.
+void UIBegin(Draw::Pipeline *shaderSet);
 void UIFlush();
 

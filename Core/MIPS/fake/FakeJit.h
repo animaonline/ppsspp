@@ -128,7 +128,6 @@ public:
 	JitBlockCache *GetBlockCache() { return &blocks; }
 
 	void ClearCache();
-	void InvalidateCache();
 	void InvalidateCacheAt(u32 em_address, int length = 4);
 
 	void EatPrefix() { js.EatPrefix(); }
@@ -177,9 +176,6 @@ public:
 
 	const u8 *breakpointBailout;
 };
-
-typedef void (FakeJit::*MIPSCompileFunc)(MIPSOpcode opcode);
-typedef int (FakeJit::*MIPSReplaceFunc)();
 
 }	// namespace MIPSComp
 

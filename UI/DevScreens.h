@@ -17,12 +17,13 @@
 
 #pragma once
 
-#include <vector>
+#include <functional>
 #include <map>
 #include <string>
+#include <vector>
 
-#include "base/functional.h"
 #include "file/file_util.h"
+#include "i18n/i18n.h"
 #include "ui/ui_screen.h"
 
 #include "UI/MiscScreens.h"
@@ -30,7 +31,7 @@
 
 class DevMenu : public PopupScreen {
 public:
-	DevMenu() : PopupScreen("Dev Tools") {}
+	DevMenu(I18NCategory *i18n) : PopupScreen(i18n->T("Dev Tools")) {}
 
 	void CreatePopupContents(UI::ViewGroup *parent) override;
 	void dialogFinished(const Screen *dialog, DialogResult result) override;
@@ -46,6 +47,16 @@ protected:
 	UI::EventReturn OnToggleAudioDebug(UI::EventParams &e);
 };
 
+class JitDebugScreen : public UIDialogScreenWithBackground {
+public:
+	JitDebugScreen() {}
+	virtual void CreateViews() override;
+
+private:
+	UI::EventReturn OnEnableAll(UI::EventParams &e);
+	UI::EventReturn OnDisableAll(UI::EventParams &e);
+};
+
 class LogConfigScreen : public UIDialogScreenWithBackground {
 public:
 	LogConfigScreen() {}
@@ -53,6 +64,8 @@ public:
 
 private:
 	UI::EventReturn OnToggleAll(UI::EventParams &e);
+	UI::EventReturn OnEnableAll(UI::EventParams &e);
+	UI::EventReturn OnDisableAll(UI::EventParams &e);
 	UI::EventReturn OnLogLevel(UI::EventParams &e);
 	UI::EventReturn OnLogLevelChange(UI::EventParams &e);
 };
@@ -61,7 +74,7 @@ class LogScreen : public UIDialogScreenWithBackground {
 public:
 	LogScreen() : toBottom_(false) {}
 	void CreateViews() override;
-	void update(InputState &input) override;
+	void update() override;
 
 private:
 	void UpdateLog();
@@ -84,7 +97,7 @@ private:
 class SystemInfoScreen : public UIDialogScreenWithBackground {
 public:
 	SystemInfoScreen() {}
-	virtual void CreateViews();
+	void CreateViews() override;
 };
 
 class AddressPromptScreen : public PopupScreen {
@@ -149,7 +162,7 @@ public:
 	void CreateViews() override;
 
 private:
-	void ListShaders(DebugShaderType shaderType, UI::LinearLayout *view);
+	int ListShaders(DebugShaderType shaderType, UI::LinearLayout *view);
 
 	UI::EventReturn OnShaderClick(UI::EventParams &e);
 

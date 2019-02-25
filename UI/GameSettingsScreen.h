@@ -17,8 +17,11 @@
 
 #pragma once
 
+#include "ppsspp_config.h"
 #include "ui/ui_screen.h"
 #include "UI/MiscScreens.h"
+
+class SettingInfoMessage;
 
 // Per-game settings screen - enables you to configure graphic options, control options, etc
 // per game.
@@ -26,29 +29,34 @@ class GameSettingsScreen : public UIDialogScreenWithGameBackground {
 public:
 	GameSettingsScreen(std::string gamePath, std::string gameID = "", bool editThenRestore = false);
 
-	virtual void update(InputState &input);
-	virtual void onFinish(DialogResult result);
+	void update() override;
+	void onFinish(DialogResult result) override;
+	void sendMessage(const char *message, const char *value) override;
+	std::string tag() const override { return "settings"; }
 
 	UI::Event OnRecentChanged;
 
 protected:
-	virtual void CreateViews();
-	virtual void sendMessage(const char *message, const char *value);
+	void CreateViews() override;
 	void CallbackRestoreDefaults(bool yes);
 	void CallbackRenderingBackend(bool yes);
+	void CallbackRenderingDevice(bool yes);
+#if PPSSPP_PLATFORM(ANDROID)
+	void CallbackMemstickFolder(bool yes);
+#endif
 	bool UseVerticalLayout() const;
 
 private:
 	std::string gameID_;
-	//edit the game-specific settings and restore the global settings after exiting
-	bool bEditThenRestore;
 	bool lastVertical_;
 	UI::CheckBox *enableReportsCheckbox_;
 	UI::Choice *layoutEditorChoice_;
 	UI::Choice *postProcChoice_;
 	UI::Choice *displayEditor_;
+	UI::Choice *backgroundChoice_ = nullptr;
 	UI::PopupMultiChoice *resolutionChoice_;
 	UI::CheckBox *frameSkipAuto_;
+	SettingInfoMessage *settingInfo_;
 #ifdef _WIN32
 	UI::CheckBox *SavePathInMyDocumentChoice;
 	UI::CheckBox *SavePathInOtherChoice;
@@ -61,10 +69,9 @@ private:
 	UI::EventReturn OnControlMapping(UI::EventParams &e);
 	UI::EventReturn OnTouchControlLayout(UI::EventParams &e);
 	UI::EventReturn OnDumpNextFrameToLog(UI::EventParams &e);
-	UI::EventReturn OnReloadCheats(UI::EventParams &e);
 	UI::EventReturn OnTiltTypeChange(UI::EventParams &e);
 	UI::EventReturn OnTiltCustomize(UI::EventParams &e);
-	UI::EventReturn OnCombo_key(UI::EventParams &e);
+	UI::EventReturn OnComboKey(UI::EventParams &e);
 
 	// Global settings handlers
 	UI::EventReturn OnLanguage(UI::EventParams &e);
@@ -73,20 +80,24 @@ private:
 	UI::EventReturn OnPostProcShader(UI::EventParams &e);
 	UI::EventReturn OnPostProcShaderChange(UI::EventParams &e);
 	UI::EventReturn OnDeveloperTools(UI::EventParams &e);
+	UI::EventReturn OnRemoteISO(UI::EventParams &e);
 	UI::EventReturn OnChangeNickname(UI::EventParams &e);
 	UI::EventReturn OnChangeproAdhocServerAddress(UI::EventParams &e);
 	UI::EventReturn OnChangeMacAddress(UI::EventParams &e);
 	UI::EventReturn OnClearRecents(UI::EventParams &e);
+	UI::EventReturn OnChangeBackground(UI::EventParams &e);
 	UI::EventReturn OnFullscreenChange(UI::EventParams &e);
 	UI::EventReturn OnDisplayLayoutEditor(UI::EventParams &e);
 	UI::EventReturn OnResolutionChange(UI::EventParams &e);
 	UI::EventReturn OnHwScaleChange(UI::EventParams &e);
-	UI::EventReturn OnShaderChange(UI::EventParams &e);
 	UI::EventReturn OnRestoreDefaultSettings(UI::EventParams &e);
 	UI::EventReturn OnRenderingMode(UI::EventParams &e);
 	UI::EventReturn OnRenderingBackend(UI::EventParams &e);
+	UI::EventReturn OnRenderingDevice(UI::EventParams &e);
 	UI::EventReturn OnJitAffectingSetting(UI::EventParams &e);
-#ifdef _WIN32
+#if PPSSPP_PLATFORM(ANDROID)
+	UI::EventReturn OnChangeMemStickDir(UI::EventParams &e);
+#elif defined(_WIN32) && !PPSSPP_PLATFORM(UWP)
 	UI::EventReturn OnSavePathMydoc(UI::EventParams &e);
 	UI::EventReturn OnSavePathOther(UI::EventParams &e);
 #endif
@@ -95,40 +106,73 @@ private:
 
 	UI::EventReturn OnScreenRotation(UI::EventParams &e);
 	UI::EventReturn OnImmersiveModeChange(UI::EventParams &e);
+	UI::EventReturn OnSustainedPerformanceModeChange(UI::EventParams &e);
 
 	UI::EventReturn OnAdhocGuides(UI::EventParams &e);
 
 	UI::EventReturn OnSavedataManager(UI::EventParams &e);
 	UI::EventReturn OnSysInfo(UI::EventParams &e);
 
-	// Temporaries to convert bools to int settings
-	bool cap60FPS_;
-	int iAlternateSpeedPercent_;
+	// Temporaries to convert setting types.
+	int iAlternateSpeedPercent1_;
+	int iAlternateSpeedPercent2_;
 	bool enableReports_;
+
+	//edit the game-specific settings and restore the global settings after exiting
+	bool editThenRestore_;
 
 	// Cached booleans
 	bool vtxCacheEnable_;
 	bool postProcEnable_;
 	bool resolutionEnable_;
 	bool bloomHackEnable_;
+	bool tessHWEnable_;
+
+#if PPSSPP_PLATFORM(ANDROID)
+	std::string pendingMemstickFolder_;
+#endif
+};
+
+class SettingInfoMessage : public UI::LinearLayout {
+public:
+	SettingInfoMessage(int align, UI::AnchorLayoutParams *lp);
+
+	void SetBottomCutoff(float y) {
+		cutOffY_ = y;
+	}
+	void Show(const std::string &text, UI::View *refView = nullptr);
+
+	void Draw(UIContext &dc);
+
+private:
+	UI::TextView *text_ = nullptr;
+	double timeShown_ = 0.0;
+	float cutOffY_;
 };
 
 class DeveloperToolsScreen : public UIDialogScreenWithBackground {
 public:
 	DeveloperToolsScreen() {}
-	virtual void onFinish(DialogResult result);
+	void update() override;
+	void onFinish(DialogResult result) override;
 
 protected:
-	virtual void CreateViews();
+	void CreateViews() override;
 
 private:
-	UI::EventReturn OnBack(UI::EventParams &e);
 	UI::EventReturn OnRunCPUTests(UI::EventParams &e);
 	UI::EventReturn OnLoggingChanged(UI::EventParams &e);
 	UI::EventReturn OnLoadLanguageIni(UI::EventParams &e);
 	UI::EventReturn OnSaveLanguageIni(UI::EventParams &e);
+	UI::EventReturn OnOpenTexturesIniFile(UI::EventParams &e);
 	UI::EventReturn OnLogConfig(UI::EventParams &e);
 	UI::EventReturn OnJitAffectingSetting(UI::EventParams &e);
+	UI::EventReturn OnJitDebugTools(UI::EventParams &e);
+	UI::EventReturn OnRemoteDebugger(UI::EventParams &e);
+	UI::EventReturn OnGPUDriverTest(UI::EventParams &e);
+
+	bool allowDebugger_ = false;
+	bool canAllowDebugger_ = true;
 };
 
 class ProAdhocServerScreen : public UIDialogScreenWithBackground {
@@ -136,7 +180,7 @@ public:
 	ProAdhocServerScreen() {}	
 
 protected:
-	virtual void CreateViews();
+	void CreateViews() override;
 
 private:	
 	std::string tempProAdhocServer;

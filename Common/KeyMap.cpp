@@ -44,6 +44,7 @@ struct DefMappingStruct {
 };
 
 KeyMapping g_controllerMap;
+int g_controllerMapGeneration = 0;
 std::set<std::string> g_seenPads;
 
 bool g_swapped_keys = false;
@@ -183,32 +184,8 @@ static const DefMappingStruct defaultShieldKeyMap[] = {
 	{VIRTKEY_PAUSE, NKCODE_BACK },
 };
 
-static const DefMappingStruct defaultBlackberryQWERTYKeyMap[] = {
-	{CTRL_SQUARE, NKCODE_J},
-	{CTRL_TRIANGLE, NKCODE_I},
-	{CTRL_CIRCLE, NKCODE_L},
-	{CTRL_CROSS, NKCODE_K},
-	{CTRL_LTRIGGER, NKCODE_Q},
-	{CTRL_RTRIGGER, NKCODE_W},
-	{CTRL_START, NKCODE_SPACE},
-	{CTRL_SELECT, NKCODE_ENTER},
-	{CTRL_UP   , NKCODE_W},
-	{CTRL_DOWN , NKCODE_S},
-	{CTRL_LEFT , NKCODE_A},
-	{CTRL_RIGHT, NKCODE_D},
-	{VIRTKEY_AXIS_Y_MAX, NKCODE_W},
-	{VIRTKEY_AXIS_Y_MIN, NKCODE_S},
-	{VIRTKEY_AXIS_X_MIN, NKCODE_A},
-	{VIRTKEY_AXIS_X_MAX, NKCODE_D},
-	{VIRTKEY_RAPID_FIRE  , NKCODE_SHIFT_LEFT},
-	{VIRTKEY_UNTHROTTLE  , NKCODE_TAB},
-	{VIRTKEY_SPEED_TOGGLE, NKCODE_GRAVE},
-	{VIRTKEY_PAUSE       , NKCODE_ESCAPE},
-	{VIRTKEY_REWIND      , NKCODE_DEL},
-};
-
 static const DefMappingStruct defaultPadMap[] = {
-#if defined(ANDROID) || defined(BLACKBERRY)
+#if defined(__ANDROID__)
 	{CTRL_CROSS          , NKCODE_BUTTON_A},
 	{CTRL_CIRCLE         , NKCODE_BUTTON_B},
 	{CTRL_SQUARE         , NKCODE_BUTTON_X},
@@ -218,34 +195,34 @@ static const DefMappingStruct defaultPadMap[] = {
 	{CTRL_RIGHT          , JOYSTICK_AXIS_HAT_X, +1},
 	{CTRL_UP             , JOYSTICK_AXIS_HAT_Y, -1},
 	{CTRL_DOWN           , JOYSTICK_AXIS_HAT_Y, +1},
-	{CTRL_START          , NKCODE_BUTTON_START}, 
+	{CTRL_START          , NKCODE_BUTTON_START},
 	{CTRL_SELECT         , NKCODE_BUTTON_SELECT},
-	{CTRL_LTRIGGER       , NKCODE_BUTTON_L1}, 
-	{CTRL_RTRIGGER       , NKCODE_BUTTON_R1}, 
-	{VIRTKEY_UNTHROTTLE  , NKCODE_BUTTON_R2}, 
+	{CTRL_LTRIGGER       , NKCODE_BUTTON_L1},
+	{CTRL_RTRIGGER       , NKCODE_BUTTON_R1},
+	{VIRTKEY_UNTHROTTLE  , NKCODE_BUTTON_R2},
 	{VIRTKEY_PAUSE       , NKCODE_BUTTON_THUMBR},
-	{VIRTKEY_SPEED_TOGGLE, NKCODE_BUTTON_L2}, 
-	{VIRTKEY_AXIS_X_MIN, JOYSTICK_AXIS_X, -1}, 
-	{VIRTKEY_AXIS_X_MAX, JOYSTICK_AXIS_X, +1}, 
-	{VIRTKEY_AXIS_Y_MIN, JOYSTICK_AXIS_Y, +1}, 
-	{VIRTKEY_AXIS_Y_MAX, JOYSTICK_AXIS_Y, -1}, 
+	{VIRTKEY_SPEED_TOGGLE, NKCODE_BUTTON_L2},
+	{VIRTKEY_AXIS_X_MIN, JOYSTICK_AXIS_X, -1},
+	{VIRTKEY_AXIS_X_MAX, JOYSTICK_AXIS_X, +1},
+	{VIRTKEY_AXIS_Y_MIN, JOYSTICK_AXIS_Y, +1},
+	{VIRTKEY_AXIS_Y_MAX, JOYSTICK_AXIS_Y, -1},
 #else
-	{CTRL_CROSS          , NKCODE_BUTTON_2}, 
-	{CTRL_CIRCLE         , NKCODE_BUTTON_3}, 
-	{CTRL_SQUARE         , NKCODE_BUTTON_4}, 
-	{CTRL_TRIANGLE       , NKCODE_BUTTON_1}, 
+	{CTRL_CROSS          , NKCODE_BUTTON_2},
+	{CTRL_CIRCLE         , NKCODE_BUTTON_3},
+	{CTRL_SQUARE         , NKCODE_BUTTON_4},
+	{CTRL_TRIANGLE       , NKCODE_BUTTON_1},
 	{CTRL_UP             , NKCODE_DPAD_UP},
 	{CTRL_RIGHT          , NKCODE_DPAD_RIGHT},
 	{CTRL_DOWN           , NKCODE_DPAD_DOWN},
 	{CTRL_LEFT           , NKCODE_DPAD_LEFT},
 	{CTRL_START          , NKCODE_BUTTON_10},
-	{CTRL_SELECT         , NKCODE_BUTTON_9}, 
-	{CTRL_LTRIGGER       , NKCODE_BUTTON_7}, 
-	{CTRL_RTRIGGER       , NKCODE_BUTTON_8}, 
-	{VIRTKEY_AXIS_X_MIN, JOYSTICK_AXIS_X, -1}, 
-	{VIRTKEY_AXIS_X_MAX, JOYSTICK_AXIS_X, +1}, 
-	{VIRTKEY_AXIS_Y_MIN, JOYSTICK_AXIS_Y, +1}, 
-	{VIRTKEY_AXIS_Y_MAX, JOYSTICK_AXIS_Y, -1}, 
+	{CTRL_SELECT         , NKCODE_BUTTON_9},
+	{CTRL_LTRIGGER       , NKCODE_BUTTON_7},
+	{CTRL_RTRIGGER       , NKCODE_BUTTON_8},
+	{VIRTKEY_AXIS_X_MIN, JOYSTICK_AXIS_X, -1},
+	{VIRTKEY_AXIS_X_MAX, JOYSTICK_AXIS_X, +1},
+	{VIRTKEY_AXIS_Y_MIN, JOYSTICK_AXIS_Y, +1},
+	{VIRTKEY_AXIS_Y_MAX, JOYSTICK_AXIS_Y, -1},
 #endif
 };
 
@@ -266,8 +243,8 @@ static const DefMappingStruct defaultOuyaMap[] = {
 	{VIRTKEY_PAUSE       , NKCODE_BUTTON_THUMBR},
 	{VIRTKEY_AXIS_X_MIN, JOYSTICK_AXIS_X, -1},
 	{VIRTKEY_AXIS_X_MAX, JOYSTICK_AXIS_X, +1},
-	{VIRTKEY_AXIS_Y_MAX, JOYSTICK_AXIS_Y, -1},
 	{VIRTKEY_AXIS_Y_MIN, JOYSTICK_AXIS_Y, +1},
+	{VIRTKEY_AXIS_Y_MAX, JOYSTICK_AXIS_Y, -1},
 };
 
 static const DefMappingStruct defaultXperiaPlay[] = {
@@ -313,7 +290,7 @@ void UpdateNativeMenuKeys() {
 	KeyFromPspButton(CTRL_LEFT, &leftKeys);
 	KeyFromPspButton(CTRL_RIGHT, &rightKeys);
 
-#ifdef ANDROID
+#ifdef __ANDROID__
 	// Hardcode DPAD on Android
 	upKeys.push_back(KeyDef(DEVICE_ID_ANY, NKCODE_DPAD_UP));
 	downKeys.push_back(KeyDef(DEVICE_ID_ANY, NKCODE_DPAD_DOWN));
@@ -405,10 +382,6 @@ void SetDefaultKeyMap(DefaultMaps dmap, bool replace) {
 	case DEFAULT_MAPPING_SHIELD:
 		SetDefaultKeyMap(DEVICE_ID_PAD_0, defaultShieldKeyMap, ARRAY_SIZE(defaultShieldKeyMap), replace);
 		break;
-	case DEFAULT_MAPPING_BLACKBERRY_QWERTY:
-		SetDefaultKeyMap(DEVICE_ID_KEYBOARD, defaultBlackberryQWERTYKeyMap, ARRAY_SIZE(defaultBlackberryQWERTYKeyMap), replace);
-		replace = false;
-		// Intentional fallthrough.
 	case DEFAULT_MAPPING_PAD:
 		SetDefaultKeyMap(DEVICE_ID_PAD_0, defaultPadMap, ARRAY_SIZE(defaultPadMap), replace);
 		break;
@@ -423,7 +396,7 @@ void SetDefaultKeyMap(DefaultMaps dmap, bool replace) {
 	UpdateNativeMenuKeys();
 }
 
-const KeyMap_IntStrPair key_names[] = {
+static const KeyMap_IntStrPair key_names[] = {
 	{NKCODE_A, "A"},
 	{NKCODE_B, "B"},
 	{NKCODE_C, "C"},
@@ -583,7 +556,7 @@ const KeyMap_IntStrPair key_names[] = {
 	{NKCODE_NUMPAD_7, "Num7"},
 	{NKCODE_NUMPAD_8, "Num8"},
 	{NKCODE_NUMPAD_9, "Num9"},
-	
+
 	{NKCODE_LANGUAGE_SWITCH, "Language"},
 	{NKCODE_MANNER_MODE, "Manner"},
 	{NKCODE_3D_MODE, "3D Mode"},
@@ -604,15 +577,17 @@ const KeyMap_IntStrPair key_names[] = {
 	{NKCODE_EXT_MOUSEBUTTON_1, "MB1"},
 	{NKCODE_EXT_MOUSEBUTTON_2, "MB2"},
 	{NKCODE_EXT_MOUSEBUTTON_3, "MB3"},
+	{NKCODE_EXT_MOUSEBUTTON_4, "MB4"},
+	{NKCODE_EXT_MOUSEBUTTON_5, "MB5"},
 	{NKCODE_EXT_MOUSEWHEEL_UP, "MWheelU"},
 	{NKCODE_EXT_MOUSEWHEEL_DOWN, "MWheelD"},
 
-	{NKCODE_START_QUESTION, "¿"},		
+	{NKCODE_START_QUESTION, "¿"},
 	{NKCODE_LEFTBRACE, "{"},
 	{NKCODE_RIGHTBRACE, "}"},
 };
 
-const KeyMap_IntStrPair axis_names[] = {
+static const KeyMap_IntStrPair axis_names[] = {
 	{JOYSTICK_AXIS_X, "X Axis"},
 	{JOYSTICK_AXIS_Y, "Y Axis"},
 	{JOYSTICK_AXIS_PRESSURE, "Pressure"},
@@ -671,9 +646,13 @@ const KeyMap_IntStrPair psp_button_names[] = {
 	{VIRTKEY_RAPID_FIRE, "RapidFire"},
 	{VIRTKEY_UNTHROTTLE, "Unthrottle"},
 	{VIRTKEY_SPEED_TOGGLE, "SpeedToggle"},
+	{VIRTKEY_SPEED_CUSTOM1, "Alt speed 1"},
+	{VIRTKEY_SPEED_CUSTOM2, "Alt speed 2"},
 	{VIRTKEY_PAUSE, "Pause"},
 #ifndef MOBILE_DEVICE
+	{VIRTKEY_FRAME_ADVANCE, "Frame Advance"},
 	{VIRTKEY_REWIND, "Rewind"},
+	{VIRTKEY_RECORD, "Audio/Video Recording" },
 #endif
 	{VIRTKEY_SAVE_STATE, "Save State"},
 	{VIRTKEY_LOAD_STATE, "Load State"},
@@ -689,6 +668,15 @@ const KeyMap_IntStrPair psp_button_names[] = {
 
 	{VIRTKEY_AXIS_SWAP, "AxisSwap"},
 	{VIRTKEY_DEVMENU, "DevMenu"},
+
+	{CTRL_HOME, "Home"},
+	{CTRL_HOLD, "Hold"},
+	{CTRL_WLAN, "Wlan"},
+	{CTRL_REMOTE_HOLD, "Remote hold"},
+	{CTRL_VOL_UP, "Vol +"},
+	{CTRL_VOL_DOWN, "Vol -"},
+	{CTRL_SCREEN, "Screen"},
+	{CTRL_NOTE, "Note"},
 };
 
 const int AXIS_BIND_NKCODE_START = 4000;
@@ -846,6 +834,7 @@ void SetKeyMapping(int btn, KeyDef key, bool replace) {
 		}
 		g_controllerMap[btn].push_back(key);
 	}
+	g_controllerMapGeneration++;
 
 	UpdateNativeMenuKeys();
 }
@@ -862,7 +851,7 @@ void RestoreDefault() {
 	SetDefaultKeyMap(DEFAULT_MAPPING_KEYBOARD, true);
 	SetDefaultKeyMap(DEFAULT_MAPPING_X360, false);
 	SetDefaultKeyMap(DEFAULT_MAPPING_PAD, false);
-#elif defined(ANDROID)
+#elif defined(__ANDROID__)
 	// Autodetect a few common devices
 	std::string name = System_GetProperty(SYSPROP_NAME);
 	if (IsNvidiaShield(name) || IsNvidiaShieldTV(name)) {
@@ -871,13 +860,6 @@ void RestoreDefault() {
 		SetDefaultKeyMap(DEFAULT_MAPPING_OUYA, true);
 	} else if (IsXperiaPlay(name)) {
 		SetDefaultKeyMap(DEFAULT_MAPPING_XPERIA_PLAY, true);
-	} else {
-		SetDefaultKeyMap(DEFAULT_MAPPING_PAD, true);
-	}
-#elif defined(BLACKBERRY)
-	std::string name = System_GetProperty(SYSPROP_NAME);
-	if (IsBlackberryQWERTY(name)) {
-		SetDefaultKeyMap(DEFAULT_MAPPING_BLACKBERRY_QWERTY, true);
 	} else {
 		SetDefaultKeyMap(DEFAULT_MAPPING_PAD, true);
 	}
@@ -897,7 +879,7 @@ void LoadFromIni(IniFile &file) {
 	IniFile::Section *controls = file.GetOrCreateSection("ControlMapping");
 	for (size_t i = 0; i < ARRAY_SIZE(psp_button_names); i++) {
 		std::string value;
-		controls->Get(psp_button_names[i].name.c_str(), &value, "");
+		controls->Get(psp_button_names[i].name, &value, "");
 
 		// Erase default mapping
 		g_controllerMap.erase(psp_button_names[i].key);
@@ -936,7 +918,7 @@ void SaveToIni(IniFile &file) {
 				value += ",";
 		}
 
-		controls->Set(psp_button_names[i].name.c_str(), value, "");
+		controls->Set(psp_button_names[i].name, value, "");
 	}
 }
 
@@ -956,12 +938,8 @@ bool IsXperiaPlay(const std::string &name) {
 	return name == "Sony Ericsson:R800a" || name == "Sony Ericsson:R800i" || name == "Sony Ericsson:R800x" || name == "Sony Ericsson:R800at" || name == "Sony Ericsson:SO-01D" || name == "Sony Ericsson:zeus";
 }
 
-bool IsBlackberryQWERTY(const std::string &name) {
-	return name == "Blackberry:QWERTY";
-}
-
 bool HasBuiltinController(const std::string &name) {
-	return IsOuya(name) || IsXperiaPlay(name) || IsNvidiaShield(name) || IsBlackberryQWERTY(name);
+	return IsOuya(name) || IsXperiaPlay(name) || IsNvidiaShield(name);
 }
 
 void NotifyPadConnected(const std::string &name) {
@@ -980,6 +958,7 @@ void AutoConfForPad(const std::string &name) {
 	// Add a couple of convenient keyboard mappings by default, too.
 	g_controllerMap[VIRTKEY_PAUSE].push_back(KeyDef(DEVICE_ID_KEYBOARD, NKCODE_ESCAPE));
 	g_controllerMap[VIRTKEY_UNTHROTTLE].push_back(KeyDef(DEVICE_ID_KEYBOARD, NKCODE_TAB));
+	g_controllerMapGeneration++;
 #endif
 }
 

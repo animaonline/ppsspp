@@ -26,6 +26,7 @@
 #include "Core/MIPS/MIPS.h"
 #include "Core/Reporting.h"
 #include "Core/Config.h"
+#include "Core/System.h"
 
 #include "Core/HLE/sceKernel.h"
 #include "Core/HLE/sceKernelMemory.h"
@@ -63,51 +64,57 @@ const int SCE_ERROR_MODULE_NOT_LOADED = 0x80111103;
 const int SCE_ERROR_AV_MODULE_BAD_ID = 0x80110F01;
 int oldStatus = 100; //random value
 
+static const int noDeps[] = {0};
+static const int httpModuleDeps[] = {0x0102, 0x0103, 0x0104, 0};
+static const int sslModuleDeps[] = {0x0102, 0};
+static const int httpStorageModuleDeps[] = {0x00100, 0x0102, 0x0103, 0x0104, 0x0105, 0};
+static const int atrac3PlusModuleDeps[] = {0x0300, 0};
+static const int mpegBaseModuleDeps[] = {0x0300, 0};
+static const int mp4ModuleDeps[] = {0x0300, 0};
+
 struct ModuleLoadInfo {
+	ModuleLoadInfo(int m, u32 s) : mod(m), size(s), dependencies(noDeps) {
+	}
+	ModuleLoadInfo(int m, u32 s, const int *d) : mod(m), size(s), dependencies(d) {
+	}
+
 	const int mod;
 	const u32 size;
-	const int *dependencies;
+	const int *const dependencies;
 };
 
-static const int httpModuleDeps[] = {0x0102, 0x0103, 0x0104};
-static const int sslModuleDeps[] = {0x0102};
-static const int httpStorageModuleDeps[] = {0x00100, 0x0102, 0x0103, 0x0104, 0x0105};
-static const int atrac3PlusModuleDeps[] = {0x0300};
-static const int mpegBaseModuleDeps[] = {0x0300};
-static const int mp4ModuleDeps[] = {0x0300, 0x0303};
-
 static const ModuleLoadInfo moduleLoadInfo[] = {
-	{0x0100, 0x00014000},
-	{0x0101, 0x00020000},
-	{0x0102, 0x00058000},
-	{0x0103, 0x00006000},
-	{0x0104, 0x00002000},
-	{0x0105, 0x00028000, httpModuleDeps},
-	{0x0106, 0x00044000, sslModuleDeps},
-	{0x0107, 0x00010000},
-	{0x0108, 0x00008000, httpStorageModuleDeps},
-	{0x0200, 0x00000000},
-	{0x0201, 0x00000000},
-	{0x0202, 0x00000000},
-	{0x0203, 0x00000000},
-	{0x02ff, 0x00000000},
-	{0x0300, 0x00000000},
-	{0x0301, 0x00000000},
-	{0x0302, 0x00008000, atrac3PlusModuleDeps},
-	{0x0303, 0x0000c000, mpegBaseModuleDeps},
-	{0x0304, 0x00004000},
-	{0x0305, 0x0000a300},
-	{0x0306, 0x00004000},
-	{0x0307, 0x00000000},
-	{0x0308, 0x0003c000, mp4ModuleDeps},
-	{0x03ff, 0x00000000},
-	{0x0400, 0x0000c000},
-	{0x0401, 0x00018000},
-	{0x0402, 0x00048000},
-	{0x0403, 0x0000e000},
-	{0x0500, 0x00000000},
-	{0x0600, 0x00000000},
-	{0x0601, 0x00000000},
+	ModuleLoadInfo(0x0100, 0x00014000),
+	ModuleLoadInfo(0x0101, 0x00020000),
+	ModuleLoadInfo(0x0102, 0x00058000),
+	ModuleLoadInfo(0x0103, 0x00006000),
+	ModuleLoadInfo(0x0104, 0x00002000),
+	ModuleLoadInfo(0x0105, 0x00028000, httpModuleDeps),
+	ModuleLoadInfo(0x0106, 0x00044000, sslModuleDeps),
+	ModuleLoadInfo(0x0107, 0x00010000),
+	ModuleLoadInfo(0x0108, 0x00008000, httpStorageModuleDeps),
+	ModuleLoadInfo(0x0200, 0x00000000),
+	ModuleLoadInfo(0x0201, 0x00000000),
+	ModuleLoadInfo(0x0202, 0x00000000),
+	ModuleLoadInfo(0x0203, 0x00000000),
+	ModuleLoadInfo(0x02ff, 0x00000000),
+	ModuleLoadInfo(0x0300, 0x00000000),
+	ModuleLoadInfo(0x0301, 0x00000000),
+	ModuleLoadInfo(0x0302, 0x00008000, atrac3PlusModuleDeps),
+	ModuleLoadInfo(0x0303, 0x0000c000, mpegBaseModuleDeps),
+	ModuleLoadInfo(0x0304, 0x00004000),
+	ModuleLoadInfo(0x0305, 0x0000a300),
+	ModuleLoadInfo(0x0306, 0x00004000),
+	ModuleLoadInfo(0x0307, 0x00000000),
+	ModuleLoadInfo(0x0308, 0x0003c000, mp4ModuleDeps),
+	ModuleLoadInfo(0x03ff, 0x00000000),
+	ModuleLoadInfo(0x0400, 0x0000c000),
+	ModuleLoadInfo(0x0401, 0x00018000),
+	ModuleLoadInfo(0x0402, 0x00048000),
+	ModuleLoadInfo(0x0403, 0x0000e000),
+	ModuleLoadInfo(0x0500, 0x00000000),
+	ModuleLoadInfo(0x0600, 0x00000000),
+	ModuleLoadInfo(0x0601, 0x00000000),
 };
 
 enum UtilityDialogType {
@@ -179,8 +186,14 @@ static int sceUtilitySavedataInitStart(u32 paramAddr)
 {
 	if (currentDialogActive && currentDialogType != UTILITY_DIALOG_SAVEDATA)
 	{
-		WARN_LOG(SCEUTILITY, "sceUtilitySavedataInitStart(%08x): wrong dialog type", paramAddr);
-		return SCE_ERROR_UTILITY_WRONG_TYPE;
+		if (PSP_CoreParameter().compat.flags().YugiohSaveFix)
+		{
+			WARN_LOG(SCEUTILITY, "Yugioh Savedata Correction");
+		}
+		else {
+			WARN_LOG(SCEUTILITY, "sceUtilitySavedataInitStart(%08x): wrong dialog type", paramAddr);
+			return SCE_ERROR_UTILITY_WRONG_TYPE;
+		}
 	}
 
 	oldStatus = 100;
@@ -256,7 +269,7 @@ static u32 sceUtilityUnloadAvModule(u32 module)
 	return hleDelayResult(0, "utility av module unloaded", 800);
 }
 
-const ModuleLoadInfo *__UtilityModuleInfo(int module) {
+static const ModuleLoadInfo *__UtilityModuleInfo(int module) {
 	const ModuleLoadInfo *info = 0;
 	for (size_t i = 0; i < ARRAY_SIZE(moduleLoadInfo); ++i) {
 		if (moduleLoadInfo[i].mod == module) {
@@ -270,23 +283,19 @@ const ModuleLoadInfo *__UtilityModuleInfo(int module) {
 static u32 sceUtilityLoadModule(u32 module) {
 	const ModuleLoadInfo *info = __UtilityModuleInfo(module);
 	if (!info) {
-		ERROR_LOG_REPORT(SCEUTILITY, "sceUtilityLoadModule(%i): invalid module id", module);
-		return SCE_ERROR_MODULE_BAD_ID;
+		return hleReportError(SCEUTILITY, SCE_ERROR_MODULE_BAD_ID, "invalid module id");
 	}
 	if (currentlyLoadedModules.find(module) != currentlyLoadedModules.end()) {
-		ERROR_LOG(SCEUTILITY, "sceUtilityLoadModule(%i): already loaded", module);
-		return SCE_ERROR_MODULE_ALREADY_LOADED;
+		return hleLogError(SCEUTILITY, SCE_ERROR_MODULE_ALREADY_LOADED, "already loaded");
 	}
 
 	// Some games, like Kamen Rider Climax Heroes OOO, require an error if dependencies aren't loaded yet.
-	for (const int *dep = info->dependencies; dep && *dep == 0; ++dep) {
+	for (const int *dep = info->dependencies; *dep != 0; ++dep) {
 		if (currentlyLoadedModules.find(*dep) == currentlyLoadedModules.end()) {
-			ERROR_LOG(SCEUTILITY, "sceUtilityLoadModule(%i): dependent module %i not loaded", module, *dep);
-			return hleDelayResult(SCE_KERNEL_ERROR_LIBRARY_NOTFOUND, "utility module load attempt", 25000);
+			u32 result = hleLogError(SCEUTILITY, SCE_KERNEL_ERROR_LIBRARY_NOTFOUND, "dependent module %04x not loaded", *dep);
+			return hleDelayResult(result, "utility module load attempt", 25000);
 		}
 	}
-
-	INFO_LOG(SCEUTILITY, "sceUtilityLoadModule(%i)", module);
 
 	u32 allocSize = info->size;
 	char name[64];
@@ -299,33 +308,30 @@ static u32 sceUtilityLoadModule(u32 module) {
 
 	// TODO: Each module has its own timing, technically, but this is a low-end.
 	if (module == 0x3FF)
-		return hleDelayResult(0, "utility module loaded", 130);
+		return hleDelayResult(hleLogSuccessInfoI(SCEUTILITY, 0), "utility module loaded", 130);
 	else
-		return hleDelayResult(0, "utility module loaded", 25000);
+		return hleDelayResult(hleLogSuccessInfoI(SCEUTILITY, 0), "utility module loaded", 25000);
 }
 
 static u32 sceUtilityUnloadModule(u32 module) {
 	const ModuleLoadInfo *info = __UtilityModuleInfo(module);
 	if (!info) {
-		ERROR_LOG_REPORT(SCEUTILITY, "sceUtilityUnloadModule(%i): invalid module id", module);
-		return SCE_ERROR_MODULE_BAD_ID;
+		return hleReportError(SCEUTILITY, SCE_ERROR_MODULE_BAD_ID, "invalid module id");
 	}
 
 	if (currentlyLoadedModules.find(module) == currentlyLoadedModules.end()) {
-		WARN_LOG(SCEUTILITY, "sceUtilityUnloadModule(%i): not yet loaded", module);
-		return SCE_ERROR_MODULE_NOT_LOADED;
+		return hleLogWarning(SCEUTILITY, SCE_ERROR_MODULE_NOT_LOADED, "not yet loaded");
 	}
 	if (currentlyLoadedModules[module] != 0) {
 		userMemory.Free(currentlyLoadedModules[module]);
 	}
 	currentlyLoadedModules.erase(module);
 
-	INFO_LOG(SCEUTILITY, "sceUtilityUnloadModule(%i)", module);
 	// TODO: Each module has its own timing, technically, but this is a low-end.
 	if (module == 0x3FF)
-		return hleDelayResult(0, "utility module unloaded", 110);
+		return hleDelayResult(hleLogSuccessInfoI(SCEUTILITY, 0), "utility module unloaded", 110);
 	else
-		return hleDelayResult(0, "utility module unloaded", 400);
+		return hleDelayResult(hleLogSuccessInfoI(SCEUTILITY, 0), "utility module unloaded", 400);
 }
 
 static int sceUtilityMsgDialogInitStart(u32 paramAddr)
@@ -691,6 +697,25 @@ static u32 sceUtilityGetSystemParamString(u32 id, u32 destaddr, int destSize)
 	return 0;
 }
 
+static u32 sceUtilitySetSystemParamInt(u32 id, u32 value)
+{
+	switch (id) {
+	case PSP_SYSTEMPARAM_ID_INT_ADHOC_CHANNEL:
+		if (value != 0 && value != 1 && value != 6 && value != 11) {
+			return ERROR_UTILITY_INVALID_ADHOC_CHANNEL;
+		}
+		//Settings.getInstance().writeInt(SYSTEMPARAM_SETTINGS_OPTION_ADHOC_CHANNEL, value);
+		break;
+	case PSP_SYSTEMPARAM_ID_INT_WLAN_POWERSAVE:
+		// Settings.getInstance().writeInt(SYSTEMPARAM_SETTINGS_OPTION_WLAN_POWER_SAVE, value);
+		break;
+	default:
+		// PSP can only set above int parameters
+		return ERROR_UTILITY_INVALID_SYSTEM_PARAM_ID;
+	}
+	return 0;
+}
+
 static u32 sceUtilityGetSystemParamInt(u32 id, u32 destaddr)
 {
 	DEBUG_LOG(SCEUTILITY,"sceUtilityGetSystemParamInt(%i, %08x)", id,destaddr);
@@ -876,7 +901,7 @@ const HLEFunction sceUtility[] =
 	{0XF3F76017, &WrapI_V<sceUtilityOskGetStatus>,                 "sceUtilityOskGetStatus",                 'i', ""   },
 
 	{0X41E30674, &WrapU_UU<sceUtilitySetSystemParamString>,        "sceUtilitySetSystemParamString",         'x', "xx" },
-	{0X45C18506, nullptr,                                          "sceUtilitySetSystemParamInt",            '?', ""   },
+	{0X45C18506, &WrapU_UU<sceUtilitySetSystemParamInt>,           "sceUtilitySetSystemParamInt",            'x', "xx"   },
 	{0X34B78343, &WrapU_UUI<sceUtilityGetSystemParamString>,       "sceUtilityGetSystemParamString",         'x', "xxi"},
 	{0XA5DA2406, &WrapU_UU<sceUtilityGetSystemParamInt>,           "sceUtilityGetSystemParamInt",            'x', "xx" },
 

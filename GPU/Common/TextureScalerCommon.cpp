@@ -21,7 +21,9 @@
 #endif
 
 #include <algorithm>
+#include <cassert>
 #include <cstdlib>
+#include <cstring>
 #include <cmath>
 
 #include "GPU/Common/TextureScalerCommon.h"
@@ -485,14 +487,14 @@ void dbgPGM(int w, int h, u32* pixels, const char* prefix = "dbg") { // 1 compon
 
 /////////////////////////////////////// Texture Scaler
 
-TextureScaler::TextureScaler() {
+TextureScalerCommon::TextureScalerCommon() {
 	initBicubicWeights();
 }
 
-TextureScaler::~TextureScaler() {
+TextureScalerCommon::~TextureScalerCommon() {
 }
 
-bool TextureScaler::IsEmptyOrFlat(u32* data, int pixels, int fmt) {
+bool TextureScalerCommon::IsEmptyOrFlat(u32* data, int pixels, int fmt) {
 	int pixelsPerWord = 4 / BytesPerPixel(fmt);
 	u32 ref = data[0];
 	if (pixelsPerWord > 1 && (ref & 0x0000FFFF) != (ref >> 16)) {
@@ -504,25 +506,45 @@ bool TextureScaler::IsEmptyOrFlat(u32* data, int pixels, int fmt) {
 	return true;
 }
 
-bool TextureScaler::Scale(u32* &data, u32 &dstFmt, int &width, int &height, int factor) {
-	// prevent processing empty or flat textures (this happens a lot in some games)
-	// doesn't hurt the standard case, will be very quick for textures with actual texture
-	if (IsEmptyOrFlat(data, width*height, dstFmt)) {
-		INFO_LOG(G3D, "TextureScaler: early exit -- empty/flat texture");
-		return false;
-	}
+void TextureScalerCommon::ScaleAlways(u32 *out, u32 *src, u32 &dstFmt, int &width, int &height, int factor) {
+	if (IsEmptyOrFlat(src, width*height, dstFmt)) {
+		// This means it was a flat texture.  Vulkan wants the size up front, so we need to make it happen.
+		u32 pixel;
+		// Since it's flat, one pixel is enough.  It might end up pointing to data, though.
+		u32 *pixelPointer = &pixel;
+		ConvertTo8888(dstFmt, src, pixelPointer, 1, 1);
+		if (pixelPointer != &pixel) {
+			pixel = *pixelPointer;
+		}
 
+		dstFmt = Get8888Format();
+		width *= factor;
+		height *= factor;
+
+		// ABCD.  If A = D, and AB = CD, then they must all be equal (B = C, etc.)
+		if ((pixel & 0x000000FF) == (pixel >> 24) && (pixel & 0x0000FFFF) == (pixel >> 16)) {
+			memset(out, pixel & 0xFF, width * height * sizeof(u32));
+		} else {
+			// Let's hope this is vectorized.
+			for (int i = 0; i < width * height; ++i) {
+				out[i] = pixel;
+			}
+		}
+	} else {
+		ScaleInto(out, src, dstFmt, width, height, factor);
+	}
+}
+
+bool TextureScalerCommon::ScaleInto(u32 *outputBuf, u32 *src, u32 &dstFmt, int &width, int &height, int factor) {
 #ifdef SCALING_MEASURE_TIME
 	double t_start = real_time_now();
 #endif
 
 	bufInput.resize(width*height); // used to store the input image image if it needs to be reformatted
-	bufOutput.resize(width*height*factor*factor); // used to store the upscaled image
 	u32 *inputBuf = bufInput.data();
-	u32 *outputBuf = bufOutput.data();
 
 	// convert texture to correct format for scaling
-	ConvertTo8888(dstFmt, data, inputBuf, width, height);
+	ConvertTo8888(dstFmt, src, inputBuf, width, height);
 
 	// deposterize
 	if (g_Config.bTexDeposterize) {
@@ -551,14 +573,13 @@ bool TextureScaler::Scale(u32* &data, u32 &dstFmt, int &width, int &height, int 
 
 	// update values accordingly
 	dstFmt = Get8888Format();
-	data = outputBuf;
 	width *= factor;
 	height *= factor;
 
 #ifdef SCALING_MEASURE_TIME
 	if (width*height > 64 * 64 * factor*factor) {
 		double t = real_time_now() - t_start;
-		NOTICE_LOG(MASTER_LOG, "TextureScaler: processed %9d pixels in %6.5lf seconds. (%9.2lf Mpixels/second)",
+		NOTICE_LOG(G3D, "TextureScaler: processed %9d pixels in %6.5lf seconds. (%9.2lf Mpixels/second)",
 			width*height, t, (width*height) / (t * 1000 * 1000));
 	}
 #endif
@@ -566,27 +587,45 @@ bool TextureScaler::Scale(u32* &data, u32 &dstFmt, int &width, int &height, int 
 	return true;
 }
 
-void TextureScaler::ScaleXBRZ(int factor, u32* source, u32* dest, int width, int height) {
-	xbrz::ScalerCfg cfg;
-	GlobalThreadPool::Loop(std::bind(&xbrz::scale, factor, source, dest, width, height, xbrz::ColorFormat::ARGB, cfg, placeholder::_1, placeholder::_2), 0, height);
+bool TextureScalerCommon::Scale(u32* &data, u32 &dstFmt, int &width, int &height, int factor) {
+	// prevent processing empty or flat textures (this happens a lot in some games)
+	// doesn't hurt the standard case, will be very quick for textures with actual texture
+	if (IsEmptyOrFlat(data, width*height, dstFmt)) {
+		DEBUG_LOG(G3D, "TextureScaler: early exit -- empty/flat texture");
+		return false;
+	}
+
+	bufOutput.resize(width*height*factor*factor); // used to store the upscaled image
+	u32 *outputBuf = bufOutput.data();
+
+	if (ScaleInto(outputBuf, data, dstFmt, width, height, factor)) {
+		data = outputBuf;
+		return true;
+	}
+	return false;
 }
 
-void TextureScaler::ScaleBilinear(int factor, u32* source, u32* dest, int width, int height) {
+void TextureScalerCommon::ScaleXBRZ(int factor, u32* source, u32* dest, int width, int height) {
+	xbrz::ScalerCfg cfg;
+	GlobalThreadPool::Loop(std::bind(&xbrz::scale, factor, source, dest, width, height, xbrz::ColorFormat::ARGB, cfg, std::placeholders::_1, std::placeholders::_2), 0, height);
+}
+
+void TextureScalerCommon::ScaleBilinear(int factor, u32* source, u32* dest, int width, int height) {
 	bufTmp1.resize(width*height*factor);
 	u32 *tmpBuf = bufTmp1.data();
-	GlobalThreadPool::Loop(std::bind(&bilinearH, factor, source, tmpBuf, width, placeholder::_1, placeholder::_2), 0, height);
-	GlobalThreadPool::Loop(std::bind(&bilinearV, factor, tmpBuf, dest, width, 0, height, placeholder::_1, placeholder::_2), 0, height);
+	GlobalThreadPool::Loop(std::bind(&bilinearH, factor, source, tmpBuf, width, std::placeholders::_1, std::placeholders::_2), 0, height);
+	GlobalThreadPool::Loop(std::bind(&bilinearV, factor, tmpBuf, dest, width, 0, height, std::placeholders::_1, std::placeholders::_2), 0, height);
 }
 
-void TextureScaler::ScaleBicubicBSpline(int factor, u32* source, u32* dest, int width, int height) {
-	GlobalThreadPool::Loop(std::bind(&scaleBicubicBSpline, factor, source, dest, width, height, placeholder::_1, placeholder::_2), 0, height);
+void TextureScalerCommon::ScaleBicubicBSpline(int factor, u32* source, u32* dest, int width, int height) {
+	GlobalThreadPool::Loop(std::bind(&scaleBicubicBSpline, factor, source, dest, width, height, std::placeholders::_1, std::placeholders::_2), 0, height);
 }
 
-void TextureScaler::ScaleBicubicMitchell(int factor, u32* source, u32* dest, int width, int height) {
-	GlobalThreadPool::Loop(std::bind(&scaleBicubicMitchell, factor, source, dest, width, height, placeholder::_1, placeholder::_2), 0, height);
+void TextureScalerCommon::ScaleBicubicMitchell(int factor, u32* source, u32* dest, int width, int height) {
+	GlobalThreadPool::Loop(std::bind(&scaleBicubicMitchell, factor, source, dest, width, height, std::placeholders::_1, std::placeholders::_2), 0, height);
 }
 
-void TextureScaler::ScaleHybrid(int factor, u32* source, u32* dest, int width, int height, bool bicubic) {
+void TextureScalerCommon::ScaleHybrid(int factor, u32* source, u32* dest, int width, int height, bool bicubic) {
 	// Basic algorithm:
 	// 1) determine a feature mask C based on a sobel-ish filter + splatting, and upscale that mask bilinearly
 	// 2) generate 2 scaled images: A - using Bilinear filtering, B - using xBRZ
@@ -599,8 +638,8 @@ void TextureScaler::ScaleHybrid(int factor, u32* source, u32* dest, int width, i
 	bufTmp1.resize(width*height);
 	bufTmp2.resize(width*height*factor*factor);
 	bufTmp3.resize(width*height*factor*factor);
-	GlobalThreadPool::Loop(std::bind(&generateDistanceMask, source, bufTmp1.data(), width, height, placeholder::_1, placeholder::_2), 0, height);
-	GlobalThreadPool::Loop(std::bind(&convolve3x3, bufTmp1.data(), bufTmp2.data(), KERNEL_SPLAT, width, height, placeholder::_1, placeholder::_2), 0, height);
+	GlobalThreadPool::Loop(std::bind(&generateDistanceMask, source, bufTmp1.data(), width, height, std::placeholders::_1, std::placeholders::_2), 0, height);
+	GlobalThreadPool::Loop(std::bind(&convolve3x3, bufTmp1.data(), bufTmp2.data(), KERNEL_SPLAT, width, height, std::placeholders::_1, std::placeholders::_2), 0, height);
 	ScaleBilinear(factor, bufTmp2.data(), bufTmp3.data(), width, height);
 	// mask C is now in bufTmp3
 
@@ -613,13 +652,13 @@ void TextureScaler::ScaleHybrid(int factor, u32* source, u32* dest, int width, i
 
 	// Now we can mix it all together
 	// The factor 8192 was found through practical testing on a variety of textures
-	GlobalThreadPool::Loop(std::bind(&mix, dest, bufTmp2.data(), bufTmp3.data(), 8192, width*factor, placeholder::_1, placeholder::_2), 0, height*factor);
+	GlobalThreadPool::Loop(std::bind(&mix, dest, bufTmp2.data(), bufTmp3.data(), 8192, width*factor, std::placeholders::_1, std::placeholders::_2), 0, height*factor);
 }
 
-void TextureScaler::DePosterize(u32* source, u32* dest, int width, int height) {
+void TextureScalerCommon::DePosterize(u32* source, u32* dest, int width, int height) {
 	bufTmp3.resize(width*height);
-	GlobalThreadPool::Loop(std::bind(&deposterizeH, source, bufTmp3.data(), width, placeholder::_1, placeholder::_2), 0, height);
-	GlobalThreadPool::Loop(std::bind(&deposterizeV, bufTmp3.data(), dest, width, height, placeholder::_1, placeholder::_2), 0, height);
-	GlobalThreadPool::Loop(std::bind(&deposterizeH, dest, bufTmp3.data(), width, placeholder::_1, placeholder::_2), 0, height);
-	GlobalThreadPool::Loop(std::bind(&deposterizeV, bufTmp3.data(), dest, width, height, placeholder::_1, placeholder::_2), 0, height);
+	GlobalThreadPool::Loop(std::bind(&deposterizeH, source, bufTmp3.data(), width, std::placeholders::_1, std::placeholders::_2), 0, height);
+	GlobalThreadPool::Loop(std::bind(&deposterizeV, bufTmp3.data(), dest, width, height, std::placeholders::_1, std::placeholders::_2), 0, height);
+	GlobalThreadPool::Loop(std::bind(&deposterizeH, dest, bufTmp3.data(), width, std::placeholders::_1, std::placeholders::_2), 0, height);
+	GlobalThreadPool::Loop(std::bind(&deposterizeV, bufTmp3.data(), dest, width, height, std::placeholders::_1, std::placeholders::_2), 0, height);
 }

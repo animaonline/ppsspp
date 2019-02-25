@@ -1,10 +1,9 @@
 #pragma once
 
-#include <string.h>
+#include <cstring>
 
 #include "base/arch.h"
 #include "base/backtrace.h"
-#include "base/compat.h"
 
 // Simple wrapper around Android's logging interface that also allows other
 // implementations, and also some misc utilities.
@@ -22,8 +21,10 @@
 
 #ifdef _M_X64
 inline void Crash() { int *x = (int *)1337; *x = 1; }
-#else
+#elif defined(_M_IX86)
 inline void Crash() { __asm { int 3 }; }
+#elif defined(_M_ARM)
+inline void Crash() { int *x = (int *)1337; *x = 1; }
 #endif
 
 #else
@@ -46,13 +47,13 @@ inline void Crash() {
 // Just ILOGs on nonWindows. On Windows it outputs to the VS output console.
 void OutputDebugStringUTF8(const char *p);
 
-#if defined(ANDROID)
+#if defined(__ANDROID__)
 
 #include <android/log.h>
 
 // Must only be used for logging
 #ifndef APP_NAME
-#define APP_NAME "NativeApp"
+#define APP_NAME "PPSSPP"
 #endif
 
 #ifdef _DEBUG
@@ -64,30 +65,20 @@ void OutputDebugStringUTF8(const char *p);
 #define ILOG(...)    __android_log_print(ANDROID_LOG_INFO, APP_NAME, __VA_ARGS__);
 #define WLOG(...)    __android_log_print(ANDROID_LOG_WARN, APP_NAME, __VA_ARGS__);
 #define ELOG(...)    __android_log_print(ANDROID_LOG_ERROR, APP_NAME, __VA_ARGS__);
-#define FLOG(...)   { __android_log_print(ANDROID_LOG_ERROR, APP_NAME, __VA_ARGS__); Crash(); }
+#define FLOG(...)    __android_log_print(ANDROID_LOG_FATAL, APP_NAME, __VA_ARGS__);
 
 #define MessageBox(a, b, c, d) __android_log_print(ANDROID_LOG_INFO, APP_NAME, "%s %s", (b), (c));
-
-#elif defined(__SYMBIAN32__)
-#include <QDebug>
-#ifdef _DEBUG
-#define DLOG(...) { qDebug(__VA_ARGS__);}
-#else
-#define DLOG(...)
-#endif
-#define ILOG(...) { qDebug(__VA_ARGS__);}
-#define WLOG(...) { qDebug(__VA_ARGS__);}
-#define ELOG(...) { qDebug(__VA_ARGS__);}
-#define FLOG(...) { qDebug(__VA_ARGS__); Crash();}
 
 #else
 
 #ifdef _WIN32
 
+const char *GetFn(const char *fn);
+
 #define XLOG_IMPL(type, ...) do {\
 	char temp[512]; \
 	char *p = temp; \
-	int len = snprintf(p, sizeof(temp), type ": %s:%i: ", __FILE__, __LINE__); \
+	int len = snprintf(p, sizeof(temp), type ": %s:%i: ", GetFn(__FILE__), __LINE__); \
 	if (len < sizeof(temp)) { \
 		p += len; \
 		p += snprintf(p, sizeof(temp) - len - 3, type ": " __VA_ARGS__);  \
@@ -97,6 +88,8 @@ void OutputDebugStringUTF8(const char *p);
 		OutputDebugStringUTF8(temp); \
 	} \
 } while (false)
+
+#define DUMPLOG(x) OutputDebugStringUTF8(x)
 
 #ifdef _DEBUG
 #define DLOG(...) XLOG_IMPL("D", __VA_ARGS__)
@@ -109,7 +102,6 @@ void OutputDebugStringUTF8(const char *p);
 #define ELOG(...) XLOG_IMPL("E", __VA_ARGS__)
 #define FLOG(...) do {XLOG_IMPL("F", __VA_ARGS__); Crash();} while (false)
 
-// TODO: Win32 version using OutputDebugString
 #else
 
 #include <stdio.h>

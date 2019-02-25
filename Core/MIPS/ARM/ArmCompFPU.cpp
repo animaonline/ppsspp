@@ -15,6 +15,9 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "ppsspp_config.h"
+#if PPSSPP_ARCH(ARM)
+
 #include "Core/Config.h"
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPS.h"
@@ -41,7 +44,7 @@
 // Currently known non working ones should have DISABLE.
 
 // #define CONDITIONAL_DISABLE { Comp_Generic(op); return; }
-#define CONDITIONAL_DISABLE ;
+#define CONDITIONAL_DISABLE(flag) if (jo.Disabled(JitDisable::flag)) { Comp_Generic(op); return; }
 #define DISABLE { Comp_Generic(op); return; }
 
 namespace MIPSComp
@@ -51,7 +54,7 @@ namespace MIPSComp
 
 void ArmJit::Comp_FPU3op(MIPSOpcode op)
 { 
-	CONDITIONAL_DISABLE;
+	CONDITIONAL_DISABLE(FPU);
 
 	int ft = _FT;
 	int fs = _FS;
@@ -89,7 +92,8 @@ extern int logBlocks;
 
 void ArmJit::Comp_FPULS(MIPSOpcode op)
 {
-	CONDITIONAL_DISABLE;
+	CONDITIONAL_DISABLE(LSU_FPU);
+	CheckMemoryBreakpoint();
 
 	s32 offset = (s16)(op & 0xFFFF);
 	int ft = _FT;
@@ -189,7 +193,7 @@ void ArmJit::Comp_FPULS(MIPSOpcode op)
 }
 
 void ArmJit::Comp_FPUComp(MIPSOpcode op) {
-	CONDITIONAL_DISABLE;
+	CONDITIONAL_DISABLE(FPU_COMP);
 
 	int opc = op & 0xF;
 	if (opc >= 8) opc -= 8; // alias
@@ -254,7 +258,7 @@ void ArmJit::Comp_FPUComp(MIPSOpcode op) {
 }
 
 void ArmJit::Comp_FPU2op(MIPSOpcode op) {
-	CONDITIONAL_DISABLE;
+	CONDITIONAL_DISABLE(FPU);
 
 	int fs = _FS;
 	int fd = _FD;
@@ -346,7 +350,7 @@ void ArmJit::Comp_FPU2op(MIPSOpcode op) {
 
 void ArmJit::Comp_mxc1(MIPSOpcode op)
 {
-	CONDITIONAL_DISABLE;
+	CONDITIONAL_DISABLE(FPU_XFER);
 
 	int fs = _FS;
 	MIPSGPReg rt = _RT;
@@ -381,7 +385,7 @@ void ArmJit::Comp_mxc1(MIPSOpcode op)
 			} else {
 				gpr.MapDirtyIn(rt, MIPS_REG_FPCOND);
 				LDR(gpr.R(rt), CTXREG, offsetof(MIPSState, fcr31));
-#ifdef HAVE_ARMV7
+#if PPSSPP_ARCH(ARMV7)
 				BFI(gpr.R(rt), gpr.R(MIPS_REG_FPCOND), 23, 1);
 #else
 				AND(SCRATCHREG1, gpr.R(MIPS_REG_FPCOND), Operand2(1)); // Just in case
@@ -413,8 +417,10 @@ void ArmJit::Comp_mxc1(MIPSOpcode op)
 			// Must clear before setting, since ApplyRoundingMode() assumes it was cleared.
 			RestoreRoundingMode();
 			bool wasImm = gpr.IsImm(rt);
+			u32 immVal = -1;
 			if (wasImm) {
-				gpr.SetImm(MIPS_REG_FPCOND, (gpr.GetImm(rt) >> 23) & 1);
+				immVal = gpr.GetImm(rt);
+				gpr.SetImm(MIPS_REG_FPCOND, (immVal >> 23) & 1);
 				gpr.MapReg(rt);
 			} else {
 				gpr.MapDirtyIn(MIPS_REG_FPCOND, rt);
@@ -424,14 +430,16 @@ void ArmJit::Comp_mxc1(MIPSOpcode op)
 			// TODO: Technically, should mask by 0x0181FFFF.  Maybe just put all of FCR31 in the reg?
 			STR(gpr.R(rt), CTXREG, offsetof(MIPSState, fcr31));
 			if (!wasImm) {
-#ifdef HAVE_ARMV7
+#if PPSSPP_ARCH(ARMV7)
 				UBFX(gpr.R(MIPS_REG_FPCOND), gpr.R(rt), 23, 1);
 #else
 				MOV(SCRATCHREG1, Operand2(gpr.R(rt), ST_LSR, 23));
 				AND(gpr.R(MIPS_REG_FPCOND), SCRATCHREG1, Operand2(1));
 #endif
+				UpdateRoundingMode();
+			} else {
+				UpdateRoundingMode(immVal);
 			}
-			UpdateRoundingMode();
 			ApplyRoundingMode();
 		} else {
 			Comp_Generic(op);
@@ -441,3 +449,5 @@ void ArmJit::Comp_mxc1(MIPSOpcode op)
 }
 
 }	// namespace MIPSComp
+
+#endif // PPSSPP_ARCH(ARM)

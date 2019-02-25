@@ -48,6 +48,12 @@ void GeDescribeVertexType(u32 op, char *buffer, int len) {
 		"u16",
 		"float",
 	};
+	static const char *typeNamesI[] = {
+		NULL,
+		"u8",
+		"u16",
+		"u32",
+	};
 	static const char *typeNamesS[] = {
 		NULL,
 		"s8",
@@ -72,8 +78,8 @@ void GeDescribeVertexType(u32 op, char *buffer, int len) {
 		w += snprintf(w, end - w, "unknown weights (%d), ", weightCount);
 	if (morphCount > 0 && w < end)
 		w += snprintf(w, end - w, "%d morphs, ", morphCount);
-	if (typeNames[idx] && w < end)
-		w += snprintf(w, end - w, "%s indexes, ", typeNames[idx]);
+	if (typeNamesI[idx] && w < end)
+		w += snprintf(w, end - w, "%s indexes, ", typeNamesI[idx]);
 
 	if (w < buffer + 2)
 		snprintf(buffer, len, "none");
@@ -94,6 +100,15 @@ void GeDisassembleOp(u32 pc, u32 op, u32 prev, char *buffer, int bufsize) {
 			snprintf(buffer, bufsize, "NOP: data= %06x", data);
 		else
 			snprintf(buffer, bufsize, "NOP");
+		break;
+
+		// Pretty sure this is some sort of NOP to eat some pipelining issue,
+		// often seen after CALL instructions.
+	case GE_CMD_NOP_FF:
+		if (data != 0)
+			snprintf(buffer, bufsize, "NOP_FF: data= %06x", data);
+		else
+			snprintf(buffer, bufsize, "NOP_FF");
 		break;
 
 	case GE_CMD_BASE:
@@ -129,7 +144,6 @@ void GeDisassembleOp(u32 pc, u32 op, u32 prev, char *buffer, int bufsize) {
 		}
 		break;
 
-	// The arrow and other rotary items in Puzbob are bezier patches, strangely enough.
 	case GE_CMD_BEZIER:
 		{
 			int bz_ucount = data & 0xFF;
@@ -148,9 +162,9 @@ void GeDisassembleOp(u32 pc, u32 op, u32 prev, char *buffer, int bufsize) {
 			int sp_utype = (data >> 16) & 0x3;
 			int sp_vtype = (data >> 18) & 0x3;
 			if (data & 0xF00000)
-				snprintf(buffer, bufsize, "DRAW SPLINE: %i x %i, %i x %i (extra %x)", sp_ucount, sp_vcount, sp_utype, sp_vtype, data >> 20);
+				snprintf(buffer, bufsize, "DRAW SPLINE: %i x %i (type %ix%i, extra %x)", sp_ucount, sp_vcount, sp_utype, sp_vtype, data >> 20);
 			else
-				snprintf(buffer, bufsize, "DRAW SPLINE: %i x %i, %i x %i", sp_ucount, sp_vcount, sp_utype, sp_vtype);
+				snprintf(buffer, bufsize, "DRAW SPLINE: %i x %i (type %ix%i)", sp_ucount, sp_vcount, sp_utype, sp_vtype);
 		}
 		break;
 
@@ -283,8 +297,8 @@ void GeDisassembleOp(u32 pc, u32 op, u32 prev, char *buffer, int bufsize) {
 		}
 		break;
 
-	case GE_CMD_CLIPENABLE:
-		snprintf(buffer, bufsize, "Clip enable: %i", data);
+	case GE_CMD_DEPTHCLAMPENABLE:
+		snprintf(buffer, bufsize, "Depth clamp enable: %i", data);
 		break;
 
 	case GE_CMD_CULLFACEENABLE:
@@ -515,7 +529,7 @@ void GeDisassembleOp(u32 pc, u32 op, u32 prev, char *buffer, int bufsize) {
 			break;
 		}
 
-	case GE_CMD_TRANSFERSTART:  // Orphis calls this TRXKICK
+	case GE_CMD_TRANSFERSTART:
 		if (data & ~1)
 			snprintf(buffer, bufsize, "Block transfer start: %d (extra %x)", data & 1, data & ~1);
 		else

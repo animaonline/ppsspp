@@ -18,8 +18,11 @@
 #include <algorithm>
 #include <limits>
 
+#include "base/display.h"
+
 #include "Common/StringUtils.h"
 #include "Core/Config.h"
+#include "Core/ConfigValues.h"
 #include "Core/System.h"
 
 #include "GPU/ge_constants.h"
@@ -31,27 +34,45 @@
 
 #include "GPU/Common/GPUStateUtils.h"
 
-
 bool CanUseHardwareTransform(int prim) {
 	if (!g_Config.bHardwareTransform)
 		return false;
 	return !gstate.isModeThrough() && prim != GE_PRIM_RECTANGLES;
 }
 
-// Dest factors where it's safe to eliminate the alpha test under certain conditions
-static const bool safeDestFactors[16] = {
-	true, // GE_DSTBLEND_SRCCOLOR,
-	true, // GE_DSTBLEND_INVSRCCOLOR,
-	false, // GE_DSTBLEND_SRCALPHA,
-	true, // GE_DSTBLEND_INVSRCALPHA,
-	true, // GE_DSTBLEND_DSTALPHA,
-	true, // GE_DSTBLEND_INVDSTALPHA,
-	false, // GE_DSTBLEND_DOUBLESRCALPHA,
-	false, // GE_DSTBLEND_DOUBLEINVSRCALPHA,
-	true, // GE_DSTBLEND_DOUBLEDSTALPHA,
-	true, // GE_DSTBLEND_DOUBLEINVDSTALPHA,
-	true, //GE_DSTBLEND_FIXB,
-};
+bool IsStencilTestOutputDisabled() {
+	// The mask applies on all stencil ops.
+	if (gstate.isStencilTestEnabled() && (gstate.pmska & 0xFF) != 0xFF) {
+		if (gstate.FrameBufFormat() == GE_FORMAT_565) {
+			return true;
+		}
+		return gstate.getStencilOpZPass() == GE_STENCILOP_KEEP && gstate.getStencilOpZFail() == GE_STENCILOP_KEEP && gstate.getStencilOpSFail() == GE_STENCILOP_KEEP;
+	}
+	return true;
+}
+
+bool NeedsTestDiscard() {
+	// We assume this is called only when enabled and not trivially true (may also be for color testing.)
+	if (gstate.isStencilTestEnabled() && (gstate.pmska & 0xFF) != 0xFF)
+		return true;
+	if (gstate.isDepthTestEnabled() && gstate.isDepthWriteEnabled())
+		return true;
+	if (!gstate.isAlphaBlendEnabled())
+		return true;
+	if (gstate.getBlendFuncA() != GE_SRCBLEND_SRCALPHA && gstate.getBlendFuncA() != GE_SRCBLEND_DOUBLESRCALPHA)
+		return true;
+	// GE_DSTBLEND_DOUBLEINVSRCALPHA is actually inverse double src alpha, and doubling zero is still zero.
+	if (gstate.getBlendFuncB() != GE_DSTBLEND_INVSRCALPHA && gstate.getBlendFuncB() != GE_DSTBLEND_DOUBLEINVSRCALPHA) {
+		if (gstate.getBlendFuncB() != GE_DSTBLEND_FIXB || gstate.getFixB() != 0xFFFFFF)
+			return true;
+	}
+	if (gstate.getBlendEq() != GE_BLENDMODE_MUL_AND_ADD && gstate.getBlendEq() != GE_BLENDMODE_MUL_AND_SUBTRACT_REVERSE)
+		return true;
+	if (gstate.isLogicOpEnabled() && gstate.getLogicOp() != GE_LOGIC_COPY)
+		return true;
+
+	return false;
+}
 
 bool IsAlphaTestTriviallyTrue() {
 	switch (gstate.getAlphaTestFunction()) {
@@ -78,25 +99,10 @@ bool IsAlphaTestTriviallyTrue() {
 
 	case GE_COMP_GREATER:
 	{
-#if 0
-		// Easy way to check the values in the debugger without ruining && early-out
-		bool doTextureAlpha = gstate.isTextureAlphaUsed();
-		bool stencilTest = gstate.isStencilTestEnabled();
-		bool depthTest = gstate.isDepthTestEnabled();
-		GEComparison depthTestFunc = gstate.getDepthTestFunction();
-		int alphaRef = gstate.getAlphaTestRef();
-		int blendA = gstate.getBlendFuncA();
-		bool blendEnabled = gstate.isAlphaBlendEnabled();
-		int blendB = gstate.getBlendFuncA();
-#endif
-		return (gstate_c.vertexFullAlpha && (gstate_c.textureFullAlpha || !gstate.isTextureAlphaUsed())) || (
-			(!gstate.isStencilTestEnabled() &&
-				!gstate.isDepthTestEnabled() &&
-				(!gstate.isLogicOpEnabled() || gstate.getLogicOp() == GE_LOGIC_COPY) &&
-				gstate.getAlphaTestRef() == 0 &&
-				gstate.isAlphaBlendEnabled() &&
-				gstate.getBlendFuncA() == GE_SRCBLEND_SRCALPHA &&
-				safeDestFactors[(int)gstate.getBlendFuncB()]));
+		// If the texture and vertex only use 1.0 alpha, then the ref value doesn't matter.
+		if (gstate_c.vertexFullAlpha && (gstate_c.textureFullAlpha || !gstate.isTextureAlphaUsed()))
+			return true;
+		return gstate.getAlphaTestRef() == 0 && !NeedsTestDiscard();
 	}
 
 	case GE_COMP_LEQUAL:
@@ -174,7 +180,7 @@ const bool nonAlphaDestFactors[16] = {
 };
 
 ReplaceAlphaType ReplaceAlphaWithStencil(ReplaceBlendType replaceBlend) {
-	if (!gstate.isStencilTestEnabled() || gstate.isModeClear()) {
+	if (IsStencilTestOutputDisabled() || gstate.isModeClear()) {
 		return REPLACE_ALPHA_NO;
 	}
 
@@ -301,7 +307,7 @@ ReplaceBlendType ReplaceBlendWithShader(bool allowShaderBlend, GEBufferFormat bu
 		case GE_DSTBLEND_DOUBLESRCALPHA:
 			// We can't technically do this correctly (due to clamping) without reading the dst color.
 			// Using a copy isn't accurate either, though, when there's overlap.
-			if (gstate_c.featureFlags & GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH)
+			if (gstate_c.Supports(GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH))
 				return !allowShaderBlend ? REPLACE_BLEND_PRE_SRC_2X_ALPHA : REPLACE_BLEND_COPY_FBO;
 			return REPLACE_BLEND_PRE_SRC_2X_ALPHA;
 
@@ -443,14 +449,14 @@ ReplaceBlendType ReplaceBlendWithShader(bool allowShaderBlend, GEBufferFormat bu
 		case GE_DSTBLEND_DOUBLESRCALPHA:
 			if (funcA == GE_SRCBLEND_SRCALPHA || funcA == GE_SRCBLEND_INVSRCALPHA) {
 				// Can't safely double alpha, will clamp.  However, a copy may easily be worse due to overlap.
-				if (gstate_c.featureFlags & GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH)
+				if (gstate_c.Supports(GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH))
 					return !allowShaderBlend ? REPLACE_BLEND_PRE_SRC_2X_ALPHA : REPLACE_BLEND_COPY_FBO;
 				return REPLACE_BLEND_PRE_SRC_2X_ALPHA;
 			} else {
 				// This means dst alpha/color is used in the src factor.
 				// Unfortunately, copying here causes overlap problems in Silent Hill games (it seems?)
 				// We will just hope that doubling alpha for the dst factor will not clamp too badly.
-				if (gstate_c.featureFlags & GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH)
+				if (gstate_c.Supports(GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH))
 					return !allowShaderBlend ? REPLACE_BLEND_2X_ALPHA : REPLACE_BLEND_COPY_FBO;
 				return REPLACE_BLEND_2X_ALPHA;
 			}
@@ -507,11 +513,14 @@ float DepthSliceFactor() {
 	if (gstate_c.Supports(GPU_SCALE_DEPTH_FROM_24BIT_TO_16BIT)) {
 		return DEPTH_SLICE_FACTOR_16BIT;
 	}
+	if (gstate_c.Supports(GPU_SUPPORTS_DEPTH_CLAMP)) {
+		return 1.0f;
+	}
 	return DEPTH_SLICE_FACTOR_HIGH;
 }
 
 // This is used for float values which might not be integers, but are in the integer scale of 65535.
-static float ToScaledDepthFromInteger(float z) {
+float ToScaledDepthFromIntegerScale(float z) {
 	if (!gstate_c.Supports(GPU_SUPPORTS_ACCURATE_DEPTH)) {
 		return z * (1.0f / 65535.0f);
 	}
@@ -525,10 +534,6 @@ static float ToScaledDepthFromInteger(float z) {
 		const float offset = 0.5f * (depthSliceFactor - 1.0f) * (1.0f / depthSliceFactor);
 		return z * (1.0f / depthSliceFactor) * (1.0f / 65535.0f) + offset;
 	}
-}
-
-float ToScaledDepth(u16 z) {
-	return ToScaledDepthFromInteger((float)(int)z);
 }
 
 float FromScaledDepth(float z) {
@@ -572,12 +577,13 @@ void ConvertViewportAndScissor(bool useBufferedRendering, float renderWidth, flo
 
 	// This is a bit of a hack as the render buffer isn't always that size
 	// We always scissor on non-buffered so that clears don't spill outside the frame.
-	if (useBufferedRendering && scissorX1 == 0 && scissorY1 == 0
-		&& scissorX2 >= (int)gstate_c.curRTWidth
-		&& scissorY2 >= (int)gstate_c.curRTHeight) {
-		out.scissorEnable = false;
+	out.scissorEnable = true;
+	if (scissorX2 < scissorX1 || scissorY2 < scissorY1) {
+		out.scissorX = 0;
+		out.scissorY = 0;
+		out.scissorW = 0;
+		out.scissorH = 0;
 	} else {
-		out.scissorEnable = true;
 		out.scissorX = renderX + displayOffsetX + scissorX1 * renderWidthFactor;
 		out.scissorY = renderY + displayOffsetY + scissorY1 * renderHeightFactor;
 		out.scissorW = (scissorX2 - scissorX1) * renderWidthFactor;
@@ -595,8 +601,8 @@ void ConvertViewportAndScissor(bool useBufferedRendering, float renderWidth, flo
 		out.viewportY = renderY + displayOffsetY;
 		out.viewportW = curRTWidth * renderWidthFactor;
 		out.viewportH = curRTHeight * renderHeightFactor;
-		out.depthRangeMin = ToScaledDepthFromInteger(0);
-		out.depthRangeMax = ToScaledDepthFromInteger(65536);
+		out.depthRangeMin = ToScaledDepthFromIntegerScale(0);
+		out.depthRangeMax = ToScaledDepthFromIntegerScale(65536);
 	} else {
 		// These we can turn into a glViewport call, offset by offsetX and offsetY. Math after.
 		float vpXScale = gstate.getViewportXScale();
@@ -680,10 +686,11 @@ void ConvertViewportAndScissor(bool useBufferedRendering, float renderWidth, flo
 		// So, we apply the depth range as minz/maxz, and transform for the viewport.
 		float vpZScale = gstate.getViewportZScale();
 		float vpZCenter = gstate.getViewportZCenter();
+		// TODO: This clip the entire draw if minz > maxz.
 		float minz = gstate.getDepthRangeMin();
 		float maxz = gstate.getDepthRangeMax();
 
-		if (gstate.isClippingEnabled() && (minz == 0 || maxz == 65535)) {
+		if (gstate.isDepthClampEnabled() && (minz == 0 || maxz == 65535)) {
 			// Here, we should "clamp."  But clamping per fragment would be slow.
 			// So, instead, we just increase the available range and hope.
 			// If depthSliceFactor is 4, it means (75% / 2) of the depth lies in each direction.
@@ -695,7 +702,6 @@ void ConvertViewportAndScissor(bool useBufferedRendering, float renderWidth, flo
 				maxz += fullDepthRange;
 			}
 		}
-
 		// Okay.  So, in our shader, -1 will map to minz, and +1 will map to maxz.
 		float halfActualZRange = (maxz - minz) * (1.0f / 2.0f);
 		float zScale = halfActualZRange < std::numeric_limits<float>::epsilon() ? 1.0f : vpZScale / halfActualZRange;
@@ -705,11 +711,11 @@ void ConvertViewportAndScissor(bool useBufferedRendering, float renderWidth, flo
 		if (!gstate_c.Supports(GPU_SUPPORTS_ACCURATE_DEPTH)) {
 			zScale = 1.0f;
 			zOffset = 0.0f;
-			out.depthRangeMin = ToScaledDepthFromInteger(vpZCenter - vpZScale);
-			out.depthRangeMax = ToScaledDepthFromInteger(vpZCenter + vpZScale);
+			out.depthRangeMin = ToScaledDepthFromIntegerScale(vpZCenter - vpZScale);
+			out.depthRangeMax = ToScaledDepthFromIntegerScale(vpZCenter + vpZScale);
 		} else {
-			out.depthRangeMin = ToScaledDepthFromInteger(minz);
-			out.depthRangeMax = ToScaledDepthFromInteger(maxz);
+			out.depthRangeMin = ToScaledDepthFromIntegerScale(minz);
+			out.depthRangeMax = ToScaledDepthFromIntegerScale(maxz);
 		}
 
 		// OpenGL will clamp these for us anyway, and Direct3D will error if not clamped.
@@ -780,12 +786,10 @@ static const BlendEq eqLookup[] = {
 
 static BlendFactor toDualSource(BlendFactor blendfunc) {
 	switch (blendfunc) {
-#if !defined(USING_GLES2)   // TODO: Remove when we have better headers
 	case BlendFactor::SRC_ALPHA:
 		return BlendFactor::SRC1_ALPHA;
 	case BlendFactor::ONE_MINUS_SRC_ALPHA:
 		return BlendFactor::ONE_MINUS_SRC1_ALPHA;
-#endif
 	default:
 		return blendfunc;
 	}
@@ -823,22 +827,16 @@ static inline bool blendColorSimilar(uint32_t a, uint32_t b, int margin = 25) { 
 }
 
 // Try to simulate some common logic ops.
-void ApplyStencilReplaceAndLogicOp(ReplaceAlphaType replaceAlphaWithStencil, GenericBlendState &blendState) {
-	StencilValueType stencilType = STENCIL_VALUE_KEEP;
-	if (replaceAlphaWithStencil == REPLACE_ALPHA_YES) {
-		stencilType = ReplaceAlphaWithStencilType();
-	}
-
-	// Normally, we would add src + 0, but the logic op may have us do differently.
-	BlendFactor srcBlend = BlendFactor::ONE;
-	BlendFactor dstBlend = BlendFactor::ZERO;
-	BlendEq blendEq = BlendEq::ADD;
-
+static void ApplyLogicOp(BlendFactor &srcBlend, BlendFactor &dstBlend, BlendEq &blendEq) {
+	// Note: our shader solution applies logic ops BEFORE blending, not correctly after.
+	// This is however fine for the most common ones, like CLEAR/NOOP/SET, etc.
 	if (!gstate_c.Supports(GPU_SUPPORTS_LOGIC_OP)) {
 		if (gstate.isLogicOpEnabled()) {
 			switch (gstate.getLogicOp()) {
 			case GE_LOGIC_CLEAR:
 				srcBlend = BlendFactor::ZERO;
+				dstBlend = BlendFactor::ZERO;
+				blendEq = BlendEq::ADD;
 				break;
 			case GE_LOGIC_AND:
 			case GE_LOGIC_AND_REVERSE:
@@ -866,6 +864,7 @@ void ApplyStencilReplaceAndLogicOp(ReplaceAlphaType replaceAlphaWithStencil, Gen
 			case GE_LOGIC_NOOP:
 				srcBlend = BlendFactor::ZERO;
 				dstBlend = BlendFactor::ONE;
+				blendEq = BlendEq::ADD;
 				break;
 			case GE_LOGIC_XOR:
 				WARN_LOG_REPORT_ONCE(d3dLogicOpOrXor, G3D, "Unsupported XOR logic op: %x", gstate.getLogicOp());
@@ -880,14 +879,30 @@ void ApplyStencilReplaceAndLogicOp(ReplaceAlphaType replaceAlphaWithStencil, Gen
 				WARN_LOG_REPORT_ONCE(d3dLogicOpOrReverse, G3D, "Unsupported OR REVERSE logic op: %x", gstate.getLogicOp());
 				break;
 			case GE_LOGIC_SET:
+				srcBlend = BlendFactor::ONE;
 				dstBlend = BlendFactor::ONE;
+				blendEq = BlendEq::ADD;
 				WARN_LOG_REPORT_ONCE(d3dLogicOpSet, G3D, "Attempted set for logic op: %x", gstate.getLogicOp());
 				break;
 			}
 		}
 	}
+}
 
-	// We're not blending, but we may still want to blend for stencil.
+// Try to simulate some common logic ops.
+void ApplyStencilReplaceAndLogicOp(ReplaceAlphaType replaceAlphaWithStencil, GenericBlendState &blendState) {
+	StencilValueType stencilType = STENCIL_VALUE_KEEP;
+	if (replaceAlphaWithStencil == REPLACE_ALPHA_YES) {
+		stencilType = ReplaceAlphaWithStencilType();
+	}
+
+	// Normally, we would add src + 0 with blending off, but the logic op may have us do differently.
+	BlendFactor srcBlend = BlendFactor::ONE;
+	BlendFactor dstBlend = BlendFactor::ZERO;
+	BlendEq blendEq = BlendEq::ADD;
+	ApplyLogicOp(srcBlend, dstBlend, blendEq);
+
+	// We're not blending, but we may still want to "blend" for stencil.
 	// This is only useful for INCR/DECR/INVERT.  Others can write directly.
 	switch (stencilType) {
 	case STENCIL_VALUE_INCR_4:
@@ -987,7 +1002,7 @@ void ConvertBlendState(GenericBlendState &blendState, bool allowShaderBlend) {
 
 	int constantAlpha = 255;
 	BlendFactor constantAlphaGL = BlendFactor::ONE;
-	if (gstate.isStencilTestEnabled() && replaceAlphaWithStencil == REPLACE_ALPHA_NO) {
+	if (!IsStencilTestOutputDisabled() && replaceAlphaWithStencil == REPLACE_ALPHA_NO) {
 		switch (ReplaceAlphaWithStencilType()) {
 		case STENCIL_VALUE_UNIFORM:
 			constantAlpha = gstate.getStencilTestRef();
@@ -1105,7 +1120,7 @@ void ConvertBlendState(GenericBlendState &blendState, bool allowShaderBlend) {
 
 	// Some Android devices (especially old Mali, it seems) composite badly if there's alpha in the backbuffer.
 	// So in non-buffered rendering, we will simply consider the dest alpha to be zero in blending equations.
-#ifdef ANDROID
+#ifdef __ANDROID__
 	if (g_Config.iRenderingMode == FB_NON_BUFFERED_MODE) {
 		if (glBlendFuncA == BlendFactor::DST_ALPHA) glBlendFuncA = BlendFactor::ZERO;
 		if (glBlendFuncB == BlendFactor::DST_ALPHA) glBlendFuncB = BlendFactor::ZERO;
@@ -1115,6 +1130,15 @@ void ConvertBlendState(GenericBlendState &blendState, bool allowShaderBlend) {
 #endif
 
 	// At this point, through all paths above, glBlendFuncA and glBlendFuncB will be set right somehow.
+	BlendEq colorEq;
+	if (gstate_c.Supports(GPU_SUPPORTS_BLEND_MINMAX)) {
+		colorEq = eqLookup[blendFuncEq];
+	} else {
+		colorEq = eqLookupNoMinMax[blendFuncEq];
+	}
+
+	// Attempt to apply the logic op, if any.
+	ApplyLogicOp(glBlendFuncA, glBlendFuncB, colorEq);
 
 	// The stencil-to-alpha in fragment shader doesn't apply here (blending is enabled), and we shouldn't
 	// do any blending in the alpha channel as that doesn't seem to happen on PSP.  So, we attempt to
@@ -1146,7 +1170,7 @@ void ConvertBlendState(GenericBlendState &blendState, bool allowShaderBlend) {
 			blendState.setFactors(glBlendFuncA, glBlendFuncB, BlendFactor::ONE, BlendFactor::ZERO);
 			break;
 		}
-	} else if (gstate.isStencilTestEnabled()) {
+	} else if (!IsStencilTestOutputDisabled()) {
 		switch (ReplaceAlphaWithStencilType()) {
 		case STENCIL_VALUE_KEEP:
 			blendState.setFactors(glBlendFuncA, glBlendFuncB, BlendFactor::ZERO, BlendFactor::ONE);
@@ -1184,11 +1208,7 @@ void ConvertBlendState(GenericBlendState &blendState, bool allowShaderBlend) {
 		blendState.setFactors(glBlendFuncA, glBlendFuncB, BlendFactor::ZERO, BlendFactor::ONE);
 	}
 
-	if (gstate_c.Supports(GPU_SUPPORTS_BLEND_MINMAX)) {
-		blendState.setEquation(eqLookup[blendFuncEq], alphaEq);
-	} else {
-		blendState.setEquation(eqLookupNoMinMax[blendFuncEq], alphaEq);
-	}
+	blendState.setEquation(colorEq, alphaEq);
 }
 
 static void ConvertStencilFunc5551(GenericStencilFuncState &state) {
@@ -1204,19 +1224,22 @@ static void ConvertStencilFunc5551(GenericStencilFuncState &state) {
 	const u8 maskedRef = state.testRef & state.testMask;
 	const u8 usedRef = (state.testRef & 0x80) != 0 ? 0xFF : 0x00;
 
-	auto rewriteFunc = [&](GEComparison func, u8 ref, u8 mask = 0xFF) {
+	auto rewriteFunc = [&](GEComparison func, u8 ref) {
 		// We can only safely rewrite if it doesn't use the ref, or if the ref is the same.
 		if (!usesRef || usedRef == ref) {
 			state.testFunc = func;
 			state.testRef = ref;
-			state.testMask = mask;
+			state.testMask = 0xFF;
 		}
 	};
-	auto rewriteRef = [&]() {
+	auto rewriteRef = [&](bool always) {
+		state.testFunc = always ? GE_COMP_ALWAYS : GE_COMP_NEVER;
 		if (usesRef) {
 			// Rewrite the ref (for REPLACE) to 0x00 or 0xFF (the "best" values) if safe.
 			// This will only be called if the test doesn't need the ref.
 			state.testRef = usedRef;
+			// Nuke the mask as well, since this is always/never, just for consistency.
+			state.testMask = 0xFF;
 		}
 	};
 
@@ -1226,7 +1249,7 @@ static void ConvertStencilFunc5551(GenericStencilFuncState &state) {
 	case GE_COMP_NEVER:
 	case GE_COMP_ALWAYS:
 		// Fine as is.
-		rewriteRef();
+		rewriteRef(state.testFunc == GE_COMP_ALWAYS);
 		break;
 	case GE_COMP_EQUAL: // maskedRef == maskedBuffer
 		if (maskedRef == 0) {
@@ -1237,8 +1260,7 @@ static void ConvertStencilFunc5551(GenericStencilFuncState &state) {
 			rewriteFunc(GE_COMP_NOTEQUAL, 0);
 		} else {
 			// This should never pass, regardless of buffer value.  Only 0 and 255 are directly equal.
-			state.testFunc = GE_COMP_NEVER;
-			rewriteRef();
+			rewriteRef(false);
 		}
 		break;
 	case GE_COMP_NOTEQUAL: // maskedRef != maskedBuffer
@@ -1250,15 +1272,13 @@ static void ConvertStencilFunc5551(GenericStencilFuncState &state) {
 			rewriteFunc(GE_COMP_EQUAL, 0);
 		} else {
 			// Every other value evaluates as not equal, always.
-			state.testFunc = GE_COMP_ALWAYS;
-			rewriteRef();
+			rewriteRef(true);
 		}
 		break;
 	case GE_COMP_LESS: // maskedRef < maskedBuffer
 		if (maskedRef == (0xFF & state.testMask) && state.testMask != 0) {
 			// No possible value is less than 255.
-			state.testFunc = GE_COMP_NEVER;
-			rewriteRef();
+			rewriteRef(false);
 		} else {
 			// "0 < (0 or 255)" and "254 < (0 or 255)" can only work for non zero.
 			rewriteFunc(GE_COMP_NOTEQUAL, 0);
@@ -1267,8 +1287,7 @@ static void ConvertStencilFunc5551(GenericStencilFuncState &state) {
 	case GE_COMP_LEQUAL: // maskedRef <= maskedBuffer
 		if (maskedRef == 0) {
 			// 0 is <= every possible value.
-			state.testFunc = GE_COMP_ALWAYS;
-			rewriteRef();
+			rewriteRef(true);
 		} else {
 			// "1 <= (0 or 255)" and "255 <= (0 or 255)" simply mean, anything but zero.
 			rewriteFunc(GE_COMP_NOTEQUAL, 0);
@@ -1280,15 +1299,13 @@ static void ConvertStencilFunc5551(GenericStencilFuncState &state) {
 			rewriteFunc(GE_COMP_EQUAL, 0);
 		} else {
 			// 0 is never greater than any possible value.
-			state.testFunc = GE_COMP_NEVER;
-			rewriteRef();
+			rewriteRef(false);
 		}
 		break;
 	case GE_COMP_GEQUAL: // maskedRef >= maskedBuffer
 		if (maskedRef == (0xFF & state.testMask) && state.testMask != 0) {
 			// 255 is >= every possible value.
-			state.testFunc = GE_COMP_ALWAYS;
-			rewriteRef();
+			rewriteRef(true);
 		} else {
 			// "0 >= (0 or 255)" and "254 >= "(0 or 255)" are the same, equal to zero.
 			rewriteFunc(GE_COMP_EQUAL, 0);
@@ -1321,12 +1338,12 @@ static void ConvertStencilFunc5551(GenericStencilFuncState &state) {
 }
 
 void ConvertStencilFuncState(GenericStencilFuncState &state) {
-	state.enabled = gstate.isStencilTestEnabled() && !g_Config.bDisableStencilTest;
+	state.enabled = gstate.isStencilTestEnabled();
 	if (!state.enabled)
 		return;
 
 	// The PSP's mask is reversed (bits not to write.)
-	state.writeMask = (~(gstate.pmska >> 0)) & 0xFF;
+	state.writeMask = (~gstate.pmska) & 0xFF;
 
 	state.sFail = gstate.getStencilOpSFail();
 	state.zFail = gstate.getStencilOpZFail();

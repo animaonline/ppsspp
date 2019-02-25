@@ -2,12 +2,11 @@ package org.ppsspp.ppsspp;
 
 import android.app.AlertDialog;
 import android.content.Intent;
-import android.graphics.Point;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Looper;
 import android.util.Log;
-import android.widget.Toast;
 
 public class PpssppActivity extends NativeActivity {
 	private static final String TAG = "PpssppActivity";
@@ -17,13 +16,16 @@ public class PpssppActivity extends NativeActivity {
 	private static boolean m_hasUnsupportedABI = false;
 	private static boolean m_hasNoNativeBinary = false;
 
+	public static boolean libraryLoaded = false;
+
 	@SuppressWarnings("deprecation")
-	static void CheckABIAndLoadLibrary() {
+	public static void CheckABIAndLoadLibrary() {
 		if (Build.CPU_ABI.equals("armeabi")) {
 			m_hasUnsupportedABI = true;
 		} else {
 			try {
 				System.loadLibrary("ppsspp_jni");
+				libraryLoaded = true;
 			} catch (UnsatisfiedLinkError e) {
 				Log.e(TAG, "LoadLibrary failed, UnsatifiedLinkError: " + e.toString());
 				m_hasNoNativeBinary = true;
@@ -55,7 +57,6 @@ public class PpssppActivity extends NativeActivity {
 					}
 					Looper.loop();
 				}
-
 			}.start();
 
 			try {
@@ -72,15 +73,23 @@ public class PpssppActivity extends NativeActivity {
 		// using Intent extra string. Intent extra will be null if launch normal
 		// (from app drawer or file explorer).
 		Intent intent = getIntent();
-		String action = intent.getAction();
-		if(Intent.ACTION_VIEW.equals(action))
-		{
+		// String action = intent.getAction();
+		Uri data = intent.getData();
+		if (data != null) {
 			String path = intent.getData().getPath();
+			Log.i(TAG, "Found Shortcut Parameter in data: " + path);
 			super.setShortcutParam(path);
-			Toast.makeText(getApplicationContext(), path, Toast.LENGTH_SHORT).show();
+			// Toast.makeText(getApplicationContext(), path, Toast.LENGTH_SHORT).show();
+		} else {
+			String param = getIntent().getStringExtra(SHORTCUT_EXTRA_KEY);
+			Log.e(TAG, "Got ACTION_VIEW without a valid uri, trying param");
+			if (param != null) {
+				Log.i(TAG, "Found Shortcut Parameter in extra-data: " + param);
+				super.setShortcutParam(getIntent().getStringExtra(SHORTCUT_EXTRA_KEY));
+			} else {
+				Log.e(TAG, "Shortcut missing parameter!");
+			}
 		}
-		else super.setShortcutParam(getIntent().getStringExtra(SHORTCUT_EXTRA_KEY));
-
 		super.onCreate(savedInstanceState);
 	}
 

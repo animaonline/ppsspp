@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include "ppsspp_config.h"
+
 // Extremely simple serialization framework.
 // Currently mis-named, a native ChunkFile is something different (a RIFF file)
 
@@ -27,30 +29,17 @@
 // + Sections can be versioned for backwards/forwards compatibility
 // - Serialization code for anything complex has to be manually written.
 
+#include <cstdlib>
 #include <map>
 #include <unordered_map>
 #include <deque>
 #include <list>
 #include <set>
-#if defined(MACGNUSTD)
-#include <tr1/type_traits>
-#else
 #include <type_traits>
-#endif
 
 #include "Common.h"
+#include "Swap.h"
 #include "FileUtil.h"
-#ifdef SHARED_SNAPPY
-#include <snappy-c.h>
-#else
-#include "../ext/snappy/snappy-c.h"
-#endif
-
-#if defined(MACGNUSTD)
-namespace std {
-	using tr1::is_pointer;
-}
-#endif
 
 template <class T>
 struct LinkedListItem : public T
@@ -464,7 +453,7 @@ public:
 			break;
 
 		default:
-			ERROR_LOG(COMMON, "Savestate error: invalid mode %d.", mode);
+			ERROR_LOG(SAVESTATE, "Savestate error: invalid mode %d.", mode);
 		}
 	}
 
@@ -552,7 +541,7 @@ public:
 			{
 				if (shouldExist != 0)
 				{
-					WARN_LOG(COMMON, "Savestate failure: incorrect item marker %d", shouldExist);
+					WARN_LOG(SAVESTATE, "Savestate failure: incorrect item marker %d", shouldExist);
 					SetError(ERROR_FAILURE);
 				}
 				if (mode == MODE_READ)
@@ -591,6 +580,7 @@ public:
 		ERROR_NONE,
 		ERROR_BAD_FILE,
 		ERROR_BROKEN_STATE,
+		ERROR_BAD_ALLOC,
 	};
 
 	// May fail badly if ptr doesn't point to valid data.
@@ -632,7 +622,7 @@ public:
 
 	// Load file template
 	template<class T>
-	static Error Load(const std::string &filename, const char *gitVersion, T& _class, std::string *failureReason)
+	static Error Load(const std::string &filename, std::string *gitVersion, T& _class, std::string *failureReason)
 	{
 		*failureReason = "LoadStateWrongVersion";
 
@@ -644,7 +634,7 @@ public:
 			delete [] ptr;
 		}
 		
-		INFO_LOG(COMMON, "ChunkReader: Done loading %s", filename.c_str());
+		INFO_LOG(SAVESTATE, "ChunkReader: Done loading %s", filename.c_str());
 		if (error == ERROR_NONE) {
 			failureReason->clear();
 		}
@@ -657,7 +647,9 @@ public:
 	{
 		// Get data
 		size_t const sz = MeasurePtr(_class);
-		u8 *buffer = new u8[sz];
+		u8 *buffer = (u8 *)malloc(sz);
+		if (!buffer)
+			return ERROR_BAD_ALLOC;
 		Error error = SavePtr(buffer, _class);
 
 		// SaveFile takes ownership of buffer
@@ -708,7 +700,7 @@ private:
 		REVISION_CURRENT = REVISION_TITLE,
 	};
 
-	static Error LoadFile(const std::string &filename, const char *gitVersion, u8 *&buffer, size_t &sz, std::string *failureReason);
+	static Error LoadFile(const std::string &filename, std::string *gitVersion, u8 *&buffer, size_t &sz, std::string *failureReason);
 	static Error SaveFile(const std::string &filename, const std::string &title, const char *gitVersion, u8 *buffer, size_t sz);
 	static Error LoadFileHeader(File::IOFile &pFile, SChunkHeader &header, std::string *title);
 };

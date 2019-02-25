@@ -1,7 +1,7 @@
-﻿#include <queue>
+#include <queue>
 #include <algorithm>
+#include <mutex>
 
-#include "base/mutex.h"
 #include "base/stringutil.h"
 #include "base/timeutil.h"
 #include "input/input_state.h"
@@ -12,6 +12,7 @@
 #include "ui/ui.h"
 #include "ui/view.h"
 #include "ui/ui_context.h"
+#include "ui/ui_tween.h"
 #include "thin3d/thin3d.h"
 #include "base/NativeApp.h"
 
@@ -20,10 +21,11 @@ namespace UI {
 static View *focusedView;
 static bool focusMovementEnabled;
 bool focusForced;
-static recursive_mutex mutex_;
+static std::mutex eventMutex_;  // needs recursivity!
 
 const float ITEM_HEIGHT = 64.f;
-
+const float MIN_TEXT_SCALE = 0.8f;
+const float MAX_ITEM_SIZE = 65535.0f;
 
 struct DispatchQueueItem {
 	Event *e;
@@ -32,22 +34,25 @@ struct DispatchQueueItem {
 
 std::deque<DispatchQueueItem> g_dispatchQueue;
 
-
 void EventTriggered(Event *e, EventParams params) {
-	lock_guard guard(mutex_);
-
 	DispatchQueueItem item;
 	item.e = e;
 	item.params = params;
+
+	std::unique_lock<std::mutex> guard(eventMutex_);
 	g_dispatchQueue.push_front(item);
 }
 
 void DispatchEvents() {
-	lock_guard guard(mutex_);
-
-	while (!g_dispatchQueue.empty()) {
-		DispatchQueueItem item = g_dispatchQueue.back();
-		g_dispatchQueue.pop_back();
+	while (true) {
+		DispatchQueueItem item;
+		{
+			std::unique_lock<std::mutex> guard(eventMutex_);
+			if (g_dispatchQueue.empty())
+				break;
+			item = g_dispatchQueue.back();
+			g_dispatchQueue.pop_back();
+		}
 		if (item.e) {
 			item.e->Dispatch(item.params);
 		}
@@ -101,14 +106,33 @@ void MeasureBySpec(Size sz, float contentWidth, MeasureSpec spec, float *measure
 			*measured = contentWidth < spec.size ? contentWidth : spec.size;
 		else if (spec.type == EXACTLY)
 			*measured = spec.size;
-	} else if (sz == FILL_PARENT)	{
+	} else if (sz == FILL_PARENT) {
+		// UNSPECIFIED may have a minimum size of the parent.  Let's use it to fill.
 		if (spec.type == UNSPECIFIED)
-			*measured = contentWidth;  // We have no value to set
+			*measured = std::max(spec.size, contentWidth);
 		else
 			*measured = spec.size;
 	} else if (spec.type == EXACTLY || (spec.type == AT_MOST && *measured > spec.size)) {
 		*measured = spec.size;
 	}
+}
+
+void ApplyBoundBySpec(float &bound, MeasureSpec spec) {
+	switch (spec.type) {
+	case AT_MOST:
+		bound = bound < spec.size ? bound : spec.size;
+		break;
+	case EXACTLY:
+		bound = spec.size;
+		break;
+	case UNSPECIFIED:
+		break;
+	}
+}
+
+void ApplyBoundsBySpec(Bounds &bounds, MeasureSpec horiz, MeasureSpec vert) {
+	ApplyBoundBySpec(bounds.w, horiz);
+	ApplyBoundBySpec(bounds.h, vert);
 }
 
 void Event::Add(std::function<EventReturn(EventParams&)> func) {
@@ -137,11 +161,29 @@ View::~View() {
 	if (HasFocus())
 		SetFocusedView(0);
 	RemoveQueuedEvents(this);
+
+	// Could use unique_ptr, but then we have to include tween everywhere.
+	for (auto &tween : tweens_)
+		delete tween;
+	tweens_.clear();
+}
+
+void View::Update() {
+	for (size_t i = 0; i < tweens_.size(); ++i) {
+		Tween *tween = tweens_[i];
+		if (!tween->Finished()) {
+			tween->Apply(this);
+		} else if (!tween->Persists()) {
+			tweens_.erase(tweens_.begin() + i);
+			i--;
+			delete tween;
+		}
+	}
 }
 
 void View::Measure(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert) {
 	float contentW = 0.0f, contentH = 0.0f;
-	GetContentDimensions(dc, contentW, contentH);
+	GetContentDimensionsBySpec(dc, horiz, vert, contentW, contentH);
 	MeasureBySpec(layoutParams_->width, contentW, horiz, &measuredWidth_);
 	MeasureBySpec(layoutParams_->height, contentH, vert, &measuredHeight_);
 }
@@ -151,6 +193,10 @@ void View::Measure(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert) {
 void View::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
 	w = 10.0f;
 	h = 10.0f;
+}
+
+void View::GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const {
+	GetContentDimensions(dc, w, h);
 }
 
 void View::Query(float x, float y, std::vector<View *> &list) {
@@ -184,6 +230,11 @@ void View::PersistData(PersistStatus status, std::string anonId, PersistMap &sto
 		}
 		break;
 	}
+
+	ITOA stringify;
+	for (int i = 0; i < (int)tweens_.size(); ++i) {
+		tweens_[i]->PersistData(status, tag + "/" + stringify.p((int)i), storage);
+	}
 }
 
 Point View::GetFocusPosition(FocusDirection dir) {
@@ -210,8 +261,30 @@ bool View::SetFocus() {
 	return false;
 }
 
+Clickable::Clickable(LayoutParams *layoutParams)
+	: View(layoutParams) {
+	// We set the colors later once we have a UIContext.
+	bgColor_ = AddTween(new CallbackColorTween(0.1f));
+	bgColor_->Persist();
+}
+
+void Clickable::DrawBG(UIContext &dc, const Style &style) {
+	if (style.background.type == DRAW_SOLID_COLOR) {
+		if (time_now() - bgColorLast_ >= 0.25f) {
+			bgColor_->Reset(style.background.color);
+		} else {
+			bgColor_->Divert(style.background.color, down_ ? 0.05f : 0.1f);
+		}
+		bgColorLast_ = time_now();
+
+		dc.FillRect(Drawable(bgColor_->CurrentValue()), bounds_);
+	} else {
+		dc.FillRect(style.background, bounds_);
+	}
+}
+
 void Clickable::Click() {
-	UI::EventParams e;
+	UI::EventParams e{};
 	e.v = this;
 	OnClick.Trigger(e);
 };
@@ -276,7 +349,7 @@ bool IsAcceptKey(const KeyInput &key) {
 		if (key.deviceId == DEVICE_ID_KEYBOARD) {
 			return key.keyCode == NKCODE_SPACE || key.keyCode == NKCODE_ENTER || key.keyCode == NKCODE_Z;
 		} else {
-			return key.keyCode == NKCODE_BUTTON_A || key.keyCode == NKCODE_BUTTON_CROSS || key.keyCode == NKCODE_BUTTON_1;
+			return key.keyCode == NKCODE_BUTTON_A || key.keyCode == NKCODE_BUTTON_CROSS || key.keyCode == NKCODE_BUTTON_1 || key.keyCode == NKCODE_DPAD_CENTER;
 		}
 	} else {
 		return MatchesKeyDef(confirmKeys, key);
@@ -389,19 +462,18 @@ void Item::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
 
 void ClickableItem::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
 	w = 0.0f;
-	h = 0.0f;
+	h = ITEM_HEIGHT;
 }
 
 ClickableItem::ClickableItem(LayoutParams *layoutParams) : Clickable(layoutParams) {
 	if (!layoutParams) {
 		if (layoutParams_->width == WRAP_CONTENT)
 			layoutParams_->width = FILL_PARENT;
-		layoutParams_->height = ITEM_HEIGHT;
 	}
 }
 
 void ClickableItem::Draw(UIContext &dc) {
-	Style style =	dc.theme->itemStyle;
+	Style style = dc.theme->itemStyle;
 
 	if (HasFocus()) {
 		style = dc.theme->itemFocusedStyle;
@@ -410,19 +482,38 @@ void ClickableItem::Draw(UIContext &dc) {
 		style = dc.theme->itemDownStyle;
 	}
 
-	dc.FillRect(style.background, bounds_);
+	DrawBG(dc, style);
 }
 
-void Choice::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
+void Choice::GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const {
 	if (atlasImage_ != -1) {
 		const AtlasImage &img = dc.Draw()->GetAtlas()->images[atlasImage_];
 		w = img.w;
 		h = img.h;
 	} else {
-		dc.MeasureText(dc.theme->uiFont, text_.c_str(), &w, &h);
+		const int paddingX = 12;
+		float availWidth = horiz.size - paddingX * 2 - textPadding_.horiz();
+		if (availWidth < 0.0f) {
+			// Let it have as much space as it needs.
+			availWidth = MAX_ITEM_SIZE;
+		}
+		float scale = CalculateTextScale(dc, availWidth);
+		Bounds availBounds(0, 0, availWidth, vert.size);
+		dc.MeasureTextRect(dc.theme->uiFont, scale, scale, text_.c_str(), (int)text_.size(), availBounds, &w, &h, FLAG_WRAP_TEXT);
 	}
 	w += 24;
 	h += 16;
+	h = std::max(h, ITEM_HEIGHT);
+}
+
+float Choice::CalculateTextScale(const UIContext &dc, float availWidth) const {
+	float actualWidth, actualHeight;
+	Bounds availBounds(0, 0, availWidth, bounds_.h);
+	dc.MeasureTextRect(dc.theme->uiFont, 1.0f, 1.0f, text_.c_str(), (int)text_.size(), availBounds, &actualWidth, &actualHeight);
+	if (actualWidth > availWidth) {
+		return std::max(MIN_TEXT_SCALE, availWidth / actualWidth);
+	}
+	return 1.0f;
 }
 
 void Choice::HighlightChanged(bool highlighted){
@@ -433,7 +524,7 @@ void Choice::Draw(UIContext &dc) {
 	if (!IsSticky()) {
 		ClickableItem::Draw(dc);
 	} else {
-		Style style =	dc.theme->itemStyle;
+		Style style = dc.theme->itemStyle;
 		if (highlighted_) {
 			style = dc.theme->itemHighlightedStyle;
 		}
@@ -443,7 +534,8 @@ void Choice::Draw(UIContext &dc) {
 		if (HasFocus()) {
 			style = dc.theme->itemFocusedStyle;
 		}
-		dc.FillRect(style.background, bounds_);
+
+		DrawBG(dc, style);
 	}
 
 	Style style = dc.theme->itemStyle;
@@ -454,16 +546,24 @@ void Choice::Draw(UIContext &dc) {
 	if (atlasImage_ != -1) {
 		dc.Draw()->DrawImage(atlasImage_, bounds_.centerX(), bounds_.centerY(), 1.0f, style.fgColor, ALIGN_CENTER);
 	} else {
-		int paddingX = 12;
 		dc.SetFontStyle(dc.theme->uiFont);
+
+		const int paddingX = 12;
+		const float availWidth = bounds_.w - paddingX * 2 - textPadding_.horiz();
+		float scale = CalculateTextScale(dc, availWidth);
+
+		dc.SetFontScale(scale, scale);
 		if (centered_) {
-			dc.DrawText(text_.c_str(), bounds_.centerX(), bounds_.centerY(), style.fgColor, ALIGN_CENTER);
+			dc.DrawTextRect(text_.c_str(), bounds_, style.fgColor, ALIGN_CENTER | FLAG_WRAP_TEXT);
 		} else {
 			if (iconImage_ != -1) {
 				dc.Draw()->DrawImage(iconImage_, bounds_.x2() - 32 - paddingX, bounds_.centerY(), 0.5f, style.fgColor, ALIGN_CENTER);
 			}
-			dc.DrawText(text_.c_str(), bounds_.x + paddingX, bounds_.centerY(), style.fgColor, ALIGN_VCENTER);
+
+			Bounds textBounds(bounds_.x + paddingX + textPadding_.left, bounds_.y, availWidth, bounds_.h);
+			dc.DrawTextRect(text_.c_str(), textBounds, style.fgColor, ALIGN_VCENTER | FLAG_WRAP_TEXT);
 		}
+		dc.SetFontScale(1.0f, 1.0f);
 	}
 
 	if (selected_) {
@@ -471,18 +571,37 @@ void Choice::Draw(UIContext &dc) {
 	}
 }
 
+InfoItem::InfoItem(const std::string &text, const std::string &rightText, LayoutParams *layoutParams)
+	: Item(layoutParams), text_(text), rightText_(rightText) {
+	// We set the colors later once we have a UIContext.
+	bgColor_ = AddTween(new CallbackColorTween(0.1f));
+	bgColor_->Persist();
+	fgColor_ = AddTween(new CallbackColorTween(0.1f));
+	fgColor_->Persist();
+}
+
 void InfoItem::Draw(UIContext &dc) {
 	Item::Draw(dc);
-	if (HasFocus()) {
-		UI::Style style = dc.theme->itemFocusedStyle;
-		style.background.color &= 0x7fffffff;
-		dc.FillRect(style.background, bounds_);
+
+	UI::Style style = HasFocus() ? dc.theme->itemFocusedStyle : dc.theme->infoStyle;
+
+	if (style.background.type == DRAW_SOLID_COLOR) {
+		// For a smoother fade, using the same color with 0 alpha.
+		if ((style.background.color & 0xFF000000) == 0)
+			style.background.color = dc.theme->itemFocusedStyle.background.color & 0x00FFFFFF;
+		bgColor_->Divert(style.background.color & 0x7fffffff);
+		style.background.color = bgColor_->CurrentValue();
 	}
+	fgColor_->Divert(style.fgColor);
+	style.fgColor = fgColor_->CurrentValue();
+
+	dc.FillRect(style.background, bounds_);
+
 	int paddingX = 12;
 
 	dc.SetFontStyle(dc.theme->uiFont);
-	dc.DrawText(text_.c_str(), bounds_.x + paddingX, bounds_.centerY(), 0xFFFFFFFF, ALIGN_VCENTER);
-	dc.DrawText(rightText_.c_str(), bounds_.x2() - paddingX, bounds_.centerY(), 0xFFFFFFFF, ALIGN_VCENTER | ALIGN_RIGHT);
+	dc.DrawText(text_.c_str(), bounds_.x + paddingX, bounds_.centerY(), style.fgColor, ALIGN_VCENTER);
+	dc.DrawText(rightText_.c_str(), bounds_.x2() - paddingX, bounds_.centerY(), style.fgColor, ALIGN_VCENTER | ALIGN_RIGHT);
 // 	dc.Draw()->DrawImageStretch(dc.theme->whiteImage, bounds_.x, bounds_.y, bounds_.x2(), bounds_.y + 2, dc.theme->itemDownStyle.bgColor);
 }
 
@@ -494,8 +613,21 @@ ItemHeader::ItemHeader(const std::string &text, LayoutParams *layoutParams)
 
 void ItemHeader::Draw(UIContext &dc) {
 	dc.SetFontStyle(dc.theme->uiFontSmall);
-	dc.DrawText(text_.c_str(), bounds_.x + 4, bounds_.centerY(), 0xFFFFFFFF, ALIGN_LEFT | ALIGN_VCENTER);
-	dc.Draw()->DrawImageStretch(dc.theme->whiteImage, bounds_.x, bounds_.y2()-2, bounds_.x2(), bounds_.y2(), 0xFFFFFFFF);
+	dc.DrawText(text_.c_str(), bounds_.x + 4, bounds_.centerY(), dc.theme->headerStyle.fgColor, ALIGN_LEFT | ALIGN_VCENTER);
+	dc.Draw()->DrawImageStretch(dc.theme->whiteImage, bounds_.x, bounds_.y2()-2, bounds_.x2(), bounds_.y2(), dc.theme->headerStyle.fgColor);
+}
+
+void ItemHeader::GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const {
+	Bounds bounds(0, 0, layoutParams_->width, layoutParams_->height);
+	if (bounds.w < 0) {
+		// If there's no size, let's grow as big as we want.
+		bounds.w = horiz.size == 0 ? MAX_ITEM_SIZE : horiz.size;
+	}
+	if (bounds.h < 0) {
+		bounds.h = vert.size == 0 ? MAX_ITEM_SIZE : vert.size;
+	}
+	ApplyBoundsBySpec(bounds, horiz, vert);
+	dc.MeasureTextRect(dc.theme->uiFontSmall, 1.0f, 1.0f, text_.c_str(), (int)text_.length(), bounds, &w, &h, ALIGN_LEFT | ALIGN_VCENTER);
 }
 
 void PopupHeader::Draw(UIContext &dc) {
@@ -504,7 +636,7 @@ void PopupHeader::Draw(UIContext &dc) {
 
 	float tw, th;
 	dc.SetFontStyle(dc.theme->uiFont);
-	dc.MeasureText(dc.GetFontStyle(), text_.c_str(), &tw, &th, 0);
+	dc.MeasureText(dc.GetFontStyle(), 1.0f, 1.0f, text_.c_str(), &tw, &th, 0);
 
 	float sineWidth = std::max(0.0f, (tw - availableWidth)) / 2.0f;
 
@@ -526,10 +658,16 @@ void PopupHeader::Draw(UIContext &dc) {
 	}
 }
 
-void CheckBox::Toggle(){
+void CheckBox::Toggle() {
 	if (toggle_)
 		*toggle_ = !(*toggle_);
-};
+}
+
+bool CheckBox::Toggled() const {
+	if (toggle_)
+		return *toggle_;
+	return false;
+}
 
 EventReturn CheckBox::OnClicked(EventParams &e) {
 	Toggle();
@@ -537,18 +675,70 @@ EventReturn CheckBox::OnClicked(EventParams &e) {
 }
 
 void CheckBox::Draw(UIContext &dc) {
-	ClickableItem::Draw(dc);
-	int paddingX = 12;
-
-	int image = *toggle_ ? dc.theme->checkOn : dc.theme->checkOff;
-
 	Style style = dc.theme->itemStyle;
 	if (!IsEnabled())
 		style = dc.theme->itemDisabledStyle;
-
 	dc.SetFontStyle(dc.theme->uiFont);
-	dc.DrawText(text_.c_str(), bounds_.x + paddingX, bounds_.centerY(), style.fgColor, ALIGN_VCENTER);
+
+	ClickableItem::Draw(dc);
+
+	int image = Toggled() ? dc.theme->checkOn : dc.theme->checkOff;
+	float imageW, imageH;
+	dc.Draw()->MeasureImage(image, &imageW, &imageH);
+
+	const int paddingX = 12;
+	// Padding right of the checkbox image too.
+	const float availWidth = bounds_.w - paddingX * 2 - imageW - paddingX;
+	float scale = CalculateTextScale(dc, availWidth);
+
+	dc.SetFontScale(scale, scale);
+	Bounds textBounds(bounds_.x + paddingX, bounds_.y, availWidth, bounds_.h);
+	dc.DrawTextRect(text_.c_str(), textBounds, style.fgColor, ALIGN_VCENTER | FLAG_WRAP_TEXT);
 	dc.Draw()->DrawImage(image, bounds_.x2() - paddingX, bounds_.centerY(), 1.0f, style.fgColor, ALIGN_RIGHT | ALIGN_VCENTER);
+	dc.SetFontScale(1.0f, 1.0f);
+}
+
+float CheckBox::CalculateTextScale(const UIContext &dc, float availWidth) const {
+	float actualWidth, actualHeight;
+	Bounds availBounds(0, 0, availWidth, bounds_.h);
+	dc.MeasureTextRect(dc.theme->uiFont, 1.0f, 1.0f, text_.c_str(), (int)text_.size(), availBounds, &actualWidth, &actualHeight, ALIGN_VCENTER);
+	if (actualWidth > availWidth) {
+		return std::max(MIN_TEXT_SCALE, availWidth / actualWidth);
+	}
+	return 1.0f;
+}
+
+void CheckBox::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
+	int image = Toggled() ? dc.theme->checkOn : dc.theme->checkOff;
+	float imageW, imageH;
+	dc.Draw()->MeasureImage(image, &imageW, &imageH);
+
+	const int paddingX = 12;
+	// Padding right of the checkbox image too.
+	float availWidth = bounds_.w - paddingX * 2 - imageW - paddingX;
+	if (availWidth < 0.0f) {
+		// Let it have as much space as it needs.
+		availWidth = MAX_ITEM_SIZE;
+	}
+	float scale = CalculateTextScale(dc, availWidth);
+
+	float actualWidth, actualHeight;
+	Bounds availBounds(0, 0, availWidth, bounds_.h);
+	dc.MeasureTextRect(dc.theme->uiFont, scale, scale, text_.c_str(), (int)text_.size(), availBounds, &actualWidth, &actualHeight, ALIGN_VCENTER | FLAG_WRAP_TEXT);
+
+	w = bounds_.w;
+	h = std::max(actualHeight, ITEM_HEIGHT);
+}
+
+void BitCheckBox::Toggle() {
+	if (bitfield_)
+		*bitfield_ = *bitfield_ ^ bit_;
+}
+
+bool BitCheckBox::Toggled() const {
+	if (bitfield_)
+		return (bit_ & *bitfield_) == bit_;
+	return false;
 }
 
 void Button::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
@@ -557,11 +747,11 @@ void Button::GetContentDimensions(const UIContext &dc, float &w, float &h) const
 		w = img->w;
 		h = img->h;
 	} else {
-		dc.MeasureText(dc.theme->uiFont, text_.c_str(), &w, &h);
+		dc.MeasureText(dc.theme->uiFont, 1.0f, 1.0f, text_.c_str(), &w, &h);
 	}
 	// Add some internal padding to not look totally ugly
-	w += 16;
-	h += 8;
+	w += paddingW_;
+	h += paddingH_;
 }
 
 void Button::Draw(UIContext &dc) {
@@ -572,9 +762,9 @@ void Button::Draw(UIContext &dc) {
 	if (!IsEnabled()) style = dc.theme->buttonDisabledStyle;
 
 	// dc.Draw()->DrawImage4Grid(style.image, bounds_.x, bounds_.y, bounds_.x2(), bounds_.y2(), style.bgColor);
-	dc.FillRect(style.background, bounds_);
+	DrawBG(dc, style);
 	float tw, th;
-	dc.MeasureText(dc.theme->uiFont, text_.c_str(), &tw, &th);
+	dc.MeasureText(dc.theme->uiFont, 1.0f, 1.0f, text_.c_str(), &tw, &th);
 	if (tw > bounds_.w || imageID_ != -1) {
 		dc.PushScissor(bounds_);
 	}
@@ -607,7 +797,7 @@ void ImageView::Draw(UIContext &dc) {
 	dc.Draw()->DrawImage(atlasImage_, bounds_.x, bounds_.y, scale, 0xFFFFFFFF, ALIGN_TOPLEFT);
 }
 
-void Thin3DTextureView::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
+void TextureView::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
 	// TODO: involve sizemode
 	if (texture_) {
 		w = (float)texture_->Width();
@@ -618,39 +808,37 @@ void Thin3DTextureView::GetContentDimensions(const UIContext &dc, float &w, floa
 	}
 }
 
-void Thin3DTextureView::Draw(UIContext &dc) {
+void TextureView::Draw(UIContext &dc) {
 	// TODO: involve sizemode
 	if (texture_) {
 		dc.Flush();
-		dc.GetThin3DContext()->SetTexture(0, texture_);
+		dc.GetDrawContext()->BindTexture(0, texture_);
 		dc.Draw()->Rect(bounds_.x, bounds_.y, bounds_.w, bounds_.h, color_);
 		dc.Flush();
 		dc.RebindTexture();
 	}
 }
 
-void TextView::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
-	// MeasureText doesn't seem to work with line breaks, so do something more sophisticated.
-	std::vector<std::string> lines;
-	SplitString(text_, '\n', lines);
-	float total_w = 0.f;
-	float total_h = 0.f;
-	for (size_t i = 0; i < lines.size(); i++) {
-		float temp_w, temp_h;
-		dc.MeasureText(small_ ? dc.theme->uiFontSmall : dc.theme->uiFont, lines[i].c_str(), &temp_w, &temp_h);
-		if (temp_w > total_w)
-			total_w = temp_w;
-		total_h += temp_h;
+void TextView::GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const {
+	Bounds bounds(0, 0, layoutParams_->width, layoutParams_->height);
+	if (bounds.w < 0) {
+		// If there's no size, let's grow as big as we want.
+		bounds.w = horiz.size == 0 ? MAX_ITEM_SIZE : horiz.size;
 	}
-	w = total_w;
-	h = total_h;
+	if (bounds.h < 0) {
+		bounds.h = vert.size == 0 ? MAX_ITEM_SIZE : vert.size;
+	}
+	ApplyBoundsBySpec(bounds, horiz, vert);
+	dc.MeasureTextRect(small_ ? dc.theme->uiFontSmall : dc.theme->uiFont, 1.0f, 1.0f, text_.c_str(), (int)text_.length(), bounds, &w, &h, textAlign_);
 }
 
 void TextView::Draw(UIContext &dc) {
-	float w, h;
-	GetContentDimensions(dc, w, h);
+	uint32_t textColor = hasTextColor_ ? textColor_ : dc.theme->infoStyle.fgColor;
+	if (!(textColor & 0xFF000000))
+		return;
+
 	bool clip = false;
-	if (w > bounds_.w || h > bounds_.h)
+	if (measuredWidth_ > bounds_.w || measuredHeight_ > bounds_.h)
 		clip = true;
 	if (bounds_.w < 0 || bounds_.h < 0 || !clip_) {
 		// We have a layout but, but try not to screw up rendering.
@@ -670,16 +858,17 @@ void TextView::Draw(UIContext &dc) {
 	dc.SetFontStyle(small_ ? dc.theme->uiFontSmall : dc.theme->uiFont);
 	if (shadow_) {
 		uint32_t shadowColor = 0x80000000;
-		dc.DrawTextRect(text_.c_str(), bounds_, shadowColor, textAlign_);
+		dc.DrawTextRect(text_.c_str(), bounds_.Offset(1.0f, 1.0f), shadowColor, textAlign_);
 	}
-	dc.DrawTextRect(text_.c_str(), bounds_, textColor_, textAlign_);
+	dc.DrawTextRect(text_.c_str(), bounds_, textColor, textAlign_);
 	if (clip) {
 		dc.PopScissor();
 	}
 }
 
 TextEdit::TextEdit(const std::string &text, const std::string &placeholderText, LayoutParams *layoutParams)
-  : View(layoutParams), text_(text), undo_(text), placeholderText_(placeholderText), maxLen_(255), ctrlDown_(false) {
+  : View(layoutParams), text_(text), undo_(text), placeholderText_(placeholderText),
+    textColor_(0xFFFFFFFF), maxLen_(255) {
 	caret_ = (int)text_.size();
 }
 
@@ -688,37 +877,40 @@ void TextEdit::Draw(UIContext &dc) {
 	dc.SetFontStyle(dc.theme->uiFont);
 	dc.FillRect(HasFocus() ? UI::Drawable(0x80000000) : UI::Drawable(0x30000000), bounds_);
 
+	uint32_t textColor = hasTextColor_ ? textColor_ : dc.theme->infoStyle.fgColor;
 	float textX = bounds_.x;
 	float w, h;
 
 	Bounds textBounds = bounds_;
-	textBounds.x = textX;
+	textBounds.x = textX - scrollPos_;
 
 	if (text_.empty()) {
 		if (placeholderText_.size()) {
-			dc.DrawTextRect(placeholderText_.c_str(), bounds_, 0x50FFFFFF, ALIGN_CENTER);
+			uint32_t c = textColor & 0x50FFFFFF;
+			dc.DrawTextRect(placeholderText_.c_str(), bounds_, c, ALIGN_CENTER);
 		}
 	} else {
-		dc.DrawTextRect(text_.c_str(), textBounds, 0xFFFFFFFF, ALIGN_VCENTER | ALIGN_LEFT);
+		dc.DrawTextRect(text_.c_str(), textBounds, textColor, ALIGN_VCENTER | ALIGN_LEFT | align_);
 	}
 
 	if (HasFocus()) {
 		// Hack to find the caret position. Might want to find a better way...
-		dc.MeasureTextCount(dc.theme->uiFont, text_.c_str(), caret_, &w, &h, ALIGN_VCENTER | ALIGN_LEFT);
-		float caretX = w;
-		caretX += textX;
-
+		dc.MeasureTextCount(dc.theme->uiFont, 1.0f, 1.0f, text_.c_str(), caret_, &w, &h, ALIGN_VCENTER | ALIGN_LEFT | align_);
+		float caretX = w - scrollPos_;
 		if (caretX > bounds_.w) {
-			// Scroll text to the left if the caret won't fit. Not ideal but looks better than not scrolling it.
-			textX -= caretX - bounds_.w;
+			scrollPos_ += caretX - bounds_.w;
 		}
-		dc.FillRect(UI::Drawable(0xFFFFFFFF), Bounds(caretX - 1, bounds_.y + 2, 3, bounds_.h - 4));
+		if (caretX < 0) {
+			scrollPos_ += caretX;
+		}
+		caretX += textX;
+		dc.FillRect(UI::Drawable(textColor), Bounds(caretX - 1, bounds_.y + 2, 3, bounds_.h - 4));
 	}
 	dc.PopScissor();
 }
 
 void TextEdit::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
-	dc.MeasureText(dc.theme->uiFont, text_.size() ? text_.c_str() : "Wj", &w, &h);
+	dc.MeasureText(dc.theme->uiFont, 1.0f, 1.0f, text_.size() ? text_.c_str() : "Wj", &w, &h, align_);
 	w += 2;
 	h += 2;
 }
@@ -790,7 +982,8 @@ bool TextEdit::Key(const KeyInput &input) {
 			break;
 		case NKCODE_ENTER:
 			{
-				EventParams e;
+				EventParams e{};
+				e.v = this;
 				e.s = text_;
 				OnEnter.Trigger(e);
 				break;
@@ -871,7 +1064,7 @@ bool TextEdit::Key(const KeyInput &input) {
 	}
 
 	if (textChanged) {
-		UI::EventParams e;
+		UI::EventParams e{};
 		e.v = this;
 		OnTextChange.Trigger(e);
 	}
@@ -887,7 +1080,7 @@ void TextEdit::InsertAtCaret(const char *text) {
 }
 
 void ProgressBar::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
-	dc.MeasureText(dc.theme->uiFont, "  100%  ", &w, &h);
+	dc.MeasureText(dc.theme->uiFont, 1.0f, 1.0f, "  100%  ", &w, &h);
 }
 
 void ProgressBar::Draw(UIContext &dc) {
@@ -896,6 +1089,26 @@ void ProgressBar::Draw(UIContext &dc) {
 	dc.Draw()->DrawImageStretch(dc.theme->whiteImage, bounds_.x, bounds_.y, bounds_.x + bounds_.w * progress_, bounds_.y2(), 0xc0c0c0c0);
 	dc.SetFontStyle(dc.theme->uiFont);
 	dc.DrawTextRect(temp, bounds_, 0xFFFFFFFF, ALIGN_CENTER);
+}
+
+void Spinner::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
+	w = 48;
+	h = 48;
+}
+
+void Spinner::Draw(UIContext &dc) {
+	if (!(color_ & 0xFF000000))
+		return;
+	double t = time_now_d() * 1.3f;
+	double angle = fmod(t, M_PI * 2.0);
+	float r = bounds_.w * 0.5f;
+	double da = M_PI * 2.0 / numImages_;
+	for (int i = 0; i < numImages_; i++) {
+		double a = angle + i * da;
+		float x = (float)cos(a) * r;
+		float y = (float)sin(a) * r;
+		dc.Draw()->DrawImage(images_[i], bounds_.centerX() + x, bounds_.centerY() + y, 1.0f, color_, ALIGN_CENTER);
+	}
 }
 
 void TriggerButton::Touch(const TouchInput &input) {
@@ -934,38 +1147,50 @@ void TriggerButton::GetContentDimensions(const UIContext &dc, float &w, float &h
 }
 
 bool Slider::Key(const KeyInput &input) {
-	if (HasFocus() && (input.flags & KEY_DOWN)) {
-		switch (input.keyCode) {
-		case NKCODE_DPAD_LEFT:
-		case NKCODE_MINUS:
-		case NKCODE_NUMPAD_SUBTRACT:
-			*value_ -= step_;
-			break;
-		case NKCODE_DPAD_RIGHT:
-		case NKCODE_PLUS:
-		case NKCODE_NUMPAD_ADD:
-			*value_ += step_;
-			break;
-		case NKCODE_PAGE_UP:
-			*value_ -= step_ * 10;
-			break;
-		case NKCODE_PAGE_DOWN:
-			*value_ += step_ * 10;
-			break;
-		case NKCODE_MOVE_HOME:
-			*value_ = minValue_;
-			break;
-		case NKCODE_MOVE_END:
-			*value_ = maxValue_;
-			break;
-		default:
-			return false;
+	if (HasFocus() && (input.flags & (KEY_DOWN | KEY_IS_REPEAT)) == KEY_DOWN) {
+		if (ApplyKey(input.keyCode)) {
+			Clamp();
+			repeat_ = 0;
+			repeatCode_ = input.keyCode;
+			return true;
 		}
-		Clamp();
-		return true;
+		return false;
+	} else if ((input.flags & KEY_UP) && input.keyCode == repeatCode_) {
+		repeat_ = -1;
+		return false;
 	} else {
 		return false;
 	}
+}
+
+bool Slider::ApplyKey(int keyCode) {
+	switch (keyCode) {
+	case NKCODE_DPAD_LEFT:
+	case NKCODE_MINUS:
+	case NKCODE_NUMPAD_SUBTRACT:
+		*value_ -= step_;
+		break;
+	case NKCODE_DPAD_RIGHT:
+	case NKCODE_PLUS:
+	case NKCODE_NUMPAD_ADD:
+		*value_ += step_;
+		break;
+	case NKCODE_PAGE_UP:
+		*value_ -= step_ * 10;
+		break;
+	case NKCODE_PAGE_DOWN:
+		*value_ += step_ * 10;
+		break;
+	case NKCODE_MOVE_HOME:
+		*value_ = minValue_;
+		break;
+	case NKCODE_MOVE_END:
+		*value_ = maxValue_;
+		break;
+	default:
+		return false;
+	}
+	return true;
 }
 
 void Slider::Touch(const TouchInput &input) {
@@ -975,12 +1200,15 @@ void Slider::Touch(const TouchInput &input) {
 		float relativeX = (input.x - (bounds_.x + paddingLeft_)) / (bounds_.w - paddingLeft_ - paddingRight_);
 		*value_ = floorf(relativeX * (maxValue_ - minValue_) + minValue_ + 0.5f);
 		Clamp();
-		EventParams params;
+		EventParams params{};
 		params.v = this;
 		params.a = (uint32_t)(*value_);
 		params.f = (float)(*value_);
 		OnChange.Trigger(params);
 	}
+
+	// Cancel any key repeat.
+	repeat_ = -1;
 }
 
 void Slider::Clamp() {
@@ -994,18 +1222,37 @@ void Slider::Clamp() {
 void Slider::Draw(UIContext &dc) {
 	bool focus = HasFocus();
 	uint32_t linecolor = dc.theme->popupTitle.fgColor;
-	uint32_t knobcolor = (down_ || focus) ? dc.theme->popupTitle.fgColor : 0xFFFFFFFF;
+	Style knobStyle = (down_ || focus) ? dc.theme->popupTitle : dc.theme->popupStyle;
+
 	float knobX = ((float)(*value_) - minValue_) / (maxValue_ - minValue_) * (bounds_.w - paddingLeft_ - paddingRight_) + (bounds_.x + paddingLeft_);
 	dc.FillRect(Drawable(linecolor), Bounds(bounds_.x + paddingLeft_, bounds_.centerY() - 2, knobX - (bounds_.x + paddingLeft_), 4));
 	dc.FillRect(Drawable(0xFF808080), Bounds(knobX, bounds_.centerY() - 2, (bounds_.x + bounds_.w - paddingRight_ - knobX), 4));
-	dc.Draw()->DrawImage(dc.theme->sliderKnob, knobX, bounds_.centerY(), 1.0f, knobcolor, ALIGN_CENTER);
+	dc.Draw()->DrawImage(dc.theme->sliderKnob, knobX, bounds_.centerY(), 1.0f, knobStyle.fgColor, ALIGN_CENTER);
 	char temp[64];
 	if (showPercent_)
 		sprintf(temp, "%i%%", *value_);
 	else
 		sprintf(temp, "%i", *value_);
 	dc.SetFontStyle(dc.theme->uiFont);
-	dc.DrawText(temp, bounds_.x2() - 22, bounds_.centerY(), 0xFFFFFFFF, ALIGN_CENTER);
+	dc.DrawText(temp, bounds_.x2() - 22, bounds_.centerY(), dc.theme->popupStyle.fgColor, ALIGN_CENTER | FLAG_DYNAMIC_ASCII);
+}
+
+void Slider::Update() {
+	View::Update();
+	if (repeat_ >= 0) {
+		repeat_++;
+	}
+
+	if (repeat_ >= 47) {
+		ApplyKey(repeatCode_);
+		if ((maxValue_ - minValue_) / step_ >= 300) {
+			ApplyKey(repeatCode_);
+		}
+		Clamp();
+	} else if (repeat_ >= 12 && (repeat_ & 1) == 1) {
+		ApplyKey(repeatCode_);
+		Clamp();
+	}
 }
 
 void Slider::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
@@ -1015,38 +1262,50 @@ void Slider::GetContentDimensions(const UIContext &dc, float &w, float &h) const
 }
 
 bool SliderFloat::Key(const KeyInput &input) {
-	if (HasFocus() && (input.flags & KEY_DOWN)) {
-		switch (input.keyCode) {
-		case NKCODE_DPAD_LEFT:
-		case NKCODE_MINUS:
-		case NKCODE_NUMPAD_SUBTRACT:
-			*value_ -= (maxValue_ - minValue_) / 20.0f;
-			break;
-		case NKCODE_DPAD_RIGHT:
-		case NKCODE_PLUS:
-		case NKCODE_NUMPAD_ADD:
-			*value_ += (maxValue_ - minValue_) / 30.0f;
-			break;
-		case NKCODE_PAGE_UP:
-			*value_ -= (maxValue_ - minValue_) / 5.0f;
-			break;
-		case NKCODE_PAGE_DOWN:
-			*value_ += (maxValue_ - minValue_) / 5.0f;
-			break;
-		case NKCODE_MOVE_HOME:
-			*value_ = minValue_;
-			break;
-		case NKCODE_MOVE_END:
-			*value_ = maxValue_;
-			break;
-		default:
+	if (HasFocus() && (input.flags & (KEY_DOWN | KEY_IS_REPEAT)) == KEY_DOWN) {
+		if (ApplyKey(input.keyCode)) {
+			Clamp();
+			repeat_ = 0;
+			repeatCode_ = input.keyCode;
 			return true;
 		}
-		Clamp();
-		return true;
+		return false;
+	} else if ((input.flags & KEY_UP) && input.keyCode == repeatCode_) {
+		repeat_ = -1;
+		return false;
 	} else {
 		return false;
 	}
+}
+
+bool SliderFloat::ApplyKey(int keyCode) {
+	switch (keyCode) {
+	case NKCODE_DPAD_LEFT:
+	case NKCODE_MINUS:
+	case NKCODE_NUMPAD_SUBTRACT:
+		*value_ -= (maxValue_ - minValue_) / 50.0f;
+		break;
+	case NKCODE_DPAD_RIGHT:
+	case NKCODE_PLUS:
+	case NKCODE_NUMPAD_ADD:
+		*value_ += (maxValue_ - minValue_) / 50.0f;
+		break;
+	case NKCODE_PAGE_UP:
+		*value_ -= (maxValue_ - minValue_) / 5.0f;
+		break;
+	case NKCODE_PAGE_DOWN:
+		*value_ += (maxValue_ - minValue_) / 5.0f;
+		break;
+	case NKCODE_MOVE_HOME:
+		*value_ = minValue_;
+		break;
+	case NKCODE_MOVE_END:
+		*value_ = maxValue_;
+		break;
+	default:
+		return false;
+	}
+	return true;
 }
 
 void SliderFloat::Touch(const TouchInput &input) {
@@ -1055,12 +1314,15 @@ void SliderFloat::Touch(const TouchInput &input) {
 		float relativeX = (input.x - (bounds_.x + paddingLeft_)) / (bounds_.w - paddingLeft_ - paddingRight_);
 		*value_ = (relativeX * (maxValue_ - minValue_) + minValue_);
 		Clamp();
-		EventParams params;
+		EventParams params{};
 		params.v = this;
 		params.a = (uint32_t)(*value_);
 		params.f = (float)(*value_);
 		OnChange.Trigger(params);
 	}
+
+	// Cancel any key repeat.
+	repeat_ = -1;
 }
 
 void SliderFloat::Clamp() {
@@ -1073,16 +1335,31 @@ void SliderFloat::Clamp() {
 void SliderFloat::Draw(UIContext &dc) {
 	bool focus = HasFocus();
 	uint32_t linecolor = dc.theme->popupTitle.fgColor;
-	uint32_t knobcolor = (down_ || focus) ? dc.theme->popupTitle.fgColor : 0xFFFFFFFF;
+	Style knobStyle = (down_ || focus) ? dc.theme->popupTitle : dc.theme->popupStyle;
 
 	float knobX = (*value_ - minValue_) / (maxValue_ - minValue_) * (bounds_.w - paddingLeft_ - paddingRight_) + (bounds_.x + paddingLeft_);
 	dc.FillRect(Drawable(linecolor), Bounds(bounds_.x + paddingLeft_, bounds_.centerY() - 2, knobX - (bounds_.x + paddingLeft_), 4));
 	dc.FillRect(Drawable(0xFF808080), Bounds(knobX, bounds_.centerY() - 2, (bounds_.x + bounds_.w - paddingRight_ - knobX), 4));
-	dc.Draw()->DrawImage(dc.theme->sliderKnob, knobX, bounds_.centerY(), 1.0f, knobcolor, ALIGN_CENTER);
+	dc.Draw()->DrawImage(dc.theme->sliderKnob, knobX, bounds_.centerY(), 1.0f, knobStyle.fgColor, ALIGN_CENTER);
 	char temp[64];
 	sprintf(temp, "%0.2f", *value_);
 	dc.SetFontStyle(dc.theme->uiFont);
-	dc.DrawText(temp, bounds_.x2() - 22, bounds_.centerY(), 0xFFFFFFFF, ALIGN_CENTER);
+	dc.DrawText(temp, bounds_.x2() - 22, bounds_.centerY(), dc.theme->popupStyle.fgColor, ALIGN_CENTER);
+}
+
+void SliderFloat::Update() {
+	View::Update();
+	if (repeat_ >= 0) {
+		repeat_++;
+	}
+
+	if (repeat_ >= 47) {
+		ApplyKey(repeatCode_);
+		Clamp();
+	} else if (repeat_ >= 12 && (repeat_ & 1) == 1) {
+		ApplyKey(repeatCode_);
+		Clamp();
+	}
 }
 
 void SliderFloat::GetContentDimensions(const UIContext &dc, float &w, float &h) const {

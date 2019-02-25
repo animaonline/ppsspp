@@ -17,7 +17,8 @@
 
 #pragma once
 
-#include "base/functional.h"
+#include <functional>
+
 #include "file/path.h"
 #include "ui/ui_screen.h"
 #include "ui/viewgroup.h"
@@ -33,10 +34,16 @@ public:
 
 	UI::Choice *HomebrewStoreButton() { return homebrewStoreButton_; }
 
-	void FocusGame(std::string gamePath);
+	void FocusGame(const std::string &gamePath);
+	void SetPath(const std::string &path);
+
+protected:
+	virtual bool DisplayTopBar();
+	virtual bool HasSpecialFiles(std::vector<std::string> &filenames);
+
+	void Refresh();
 
 private:
-	void Refresh();
 	bool IsCurrentPathPinned();
 	const std::vector<std::string> GetPinnedPaths();
 	const std::string GetBaseName(const std::string &path);
@@ -61,24 +68,26 @@ private:
 	std::string focusGamePath_;
 };
 
+class RemoteISOBrowseScreen;
+
 class MainScreen : public UIScreenWithBackground {
 public:
 	MainScreen();
 	~MainScreen();
 
-	virtual bool isTopLevel() const { return true; }
+	bool isTopLevel() const override { return true; }
 
 	// Horrible hack to show the demos & homebrew tab after having installed a game from a zip file.
 	static bool showHomebrewTab;
 
 protected:
-	virtual void CreateViews();
-	virtual void DrawBackground(UIContext &dc);
-	virtual void update(InputState &input);
-	virtual void sendMessage(const char *message, const char *value);
-	virtual void dialogFinished(const Screen *dialog, DialogResult result);
+	void CreateViews() override;
+	void DrawBackground(UIContext &dc) override;
+	void update() override;
+	void sendMessage(const char *message, const char *value) override;
+	void dialogFinished(const Screen *dialog, DialogResult result) override;
 
-private:
+	bool UseVerticalLayout() const;
 	bool DrawBackgroundFor(UIContext &dc, const std::string &gamePath, float progress);
 
 	UI::EventReturn OnGameSelected(UI::EventParams &e);
@@ -111,8 +120,9 @@ private:
 	bool backFromStore_;
 	bool lockBackgroundAudio_;
 	bool lastVertical_;
+	bool confirmedTemporary_ = false;
 
-	bool UseVerticalLayout() const;
+	friend class RemoteISOBrowseScreen;
 };
 
 class UmdReplaceScreen : public UIDialogScreenWithBackground {
@@ -120,8 +130,8 @@ public:
 	UmdReplaceScreen() {}
 
 protected:
-	virtual void CreateViews();
-	virtual void update(InputState &input);
+	void CreateViews() override;
+	void update() override;
 	//virtual void sendMessage(const char *message, const char *value);
 
 private:

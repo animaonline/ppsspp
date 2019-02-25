@@ -1,6 +1,10 @@
 #pragma once
 
+#include "Common/CommonTypes.h"
+
 #include "GPU/ge_constants.h"
+
+// TODO: Replace enums and structs with same from thin3d.h, for convenient mapping.
 
 enum StencilValueType {
 	STENCIL_VALUE_UNIFORM,
@@ -40,6 +44,8 @@ bool IsAlphaTestTriviallyTrue();
 bool IsColorTestAgainstZero();
 bool IsColorTestTriviallyTrue();
 bool IsAlphaTestAgainstZero();
+bool NeedsTestDiscard();
+bool IsStencilTestOutputDisabled();
 
 StencilValueType ReplaceAlphaWithStencilType();
 ReplaceAlphaType ReplaceAlphaWithStencil(ReplaceBlendType replaceBlend);
@@ -66,7 +72,7 @@ struct ViewportAndScissor {
 	bool dirtyDepth;
 };
 void ConvertViewportAndScissor(bool useBufferedRendering, float renderWidth, float renderHeight, int bufferWidth, int bufferHeight, ViewportAndScissor &out);
-float ToScaledDepth(u16 z);
+float ToScaledDepthFromIntegerScale(float z);
 float FromScaledDepth(float z);
 float DepthSliceFactor();
 
@@ -86,6 +92,8 @@ enum class BlendFactor : uint8_t {
 	ONE_MINUS_CONSTANT_COLOR,
 	CONSTANT_ALPHA,
 	ONE_MINUS_CONSTANT_ALPHA,
+	SRC1_COLOR,
+	ONE_MINUS_SRC1_COLOR,
 	SRC1_ALPHA,
 	ONE_MINUS_SRC1_ALPHA,
 	INVALID,

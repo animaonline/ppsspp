@@ -3,12 +3,7 @@
 #include <set>
 #include <stdio.h>
 
-#ifdef USING_QT_UI
-#include <QFileInfo>
-#include <QDir>
-#endif
-
-#ifdef ANDROID
+#ifdef __ANDROID__
 #include <zip.h>
 #endif
 
@@ -16,7 +11,7 @@
 #include "base/logging.h"
 #include "file/zip_read.h"
 
-#ifdef ANDROID
+#ifdef __ANDROID__
 uint8_t *ReadFromZip(zip *archive, const char* filename, size_t *size) {
 	// Figure out the file size first.
 	struct zip_stat zstat;
@@ -66,59 +61,7 @@ uint8_t *ReadLocalFile(const char *filename, size_t *size) {
 	return contents;
 }
 
-#ifdef USING_QT_UI
-uint8_t *AssetsAssetReader::ReadAsset(const char *path, size_t *size) {
-	QFile asset(QString(":/assets/") + path);
-	if (!asset.open(QIODevice::ReadOnly))
-		return 0;
-
-	uint8_t *contents = new uint8_t[asset.size()+1];
-	memcpy(contents, (uint8_t*)asset.readAll().data(), asset.size());
-	contents[asset.size()] = 0;
-	*size = asset.size();
-	asset.close();
-	return contents;
-}
-
-bool AssetsAssetReader::GetFileListing(const char *path, std::vector<FileInfo> *listing, const char *filter = 0)
-{
-	QDir assetDir(QString(":/assets/") + path);
-	QStringList filters = QString(filter).split(':', QString::SkipEmptyParts);
-	for (int i = 0; i < filters.count(); i++)
-		filters[i].prepend("*.");
-
-	QFileInfoList infoList = assetDir.entryInfoList(filters, QDir::AllDirs | QDir::NoDotAndDotDot | QDir::Files, QDir::Name);
-	foreach(QFileInfo qinfo, infoList) {
-		FileInfo info;
-		info.name = qinfo.fileName().toStdString();
-		info.fullName = qinfo.absoluteFilePath().remove(":/assets/").toStdString();
-		info.exists = true;
-		info.isWritable = false;
-		info.isDirectory = qinfo.isDir();
-		listing->push_back(info);
-	}
-	return true;
-}
-
-bool AssetsAssetReader::GetFileInfo(const char *path, FileInfo *info) {
-	QFileInfo qinfo(QString(":/assets/") + path);
-	if (!qinfo.exists()) {
-		info->exists = false;
-		info->size = 0;
-		return false;
-	}
-
-	info->fullName = path;
-	info->exists = true;
-	info->isWritable = false;
-	info->isDirectory = qinfo.isDir();
-	info->size = qinfo.size();
-	return true;
-}
-
-#endif
-
-#ifdef ANDROID
+#ifdef __ANDROID__
 
 ZipAssetReader::ZipAssetReader(const char *zip_file, const char *in_zip_path) {
 	zip_file_ = zip_open(zip_file, 0, NULL);
@@ -183,7 +126,7 @@ bool ZipAssetReader::GetFileListing(const char *orig_path, std::vector<FileInfo>
 			continue;
 		if (!memcmp(name, path, pathlen)) {
 			// The prefix is right. Let's see if this is a file or path.
-			char *slashPos = strchr(name + pathlen + 1, '/');
+			const char *slashPos = strchr(name + pathlen + 1, '/');
 			if (slashPos != 0) {
 				// A directory.
 				std::string dirName = std::string(name + pathlen + 1, slashPos - (name + pathlen + 1));
@@ -345,7 +288,7 @@ static bool IsLocalPath(const char *path) {
 uint8_t *VFSReadFile(const char *filename, size_t *size) {
 	if (IsLocalPath(filename)) {
 		// Local path, not VFS.
-		ILOG("Not a VFS path: %s . Reading local file.", filename);
+		// ILOG("Not a VFS path: %s . Reading local file.", filename);
 		return ReadLocalFile(filename, size);
 	}
 
@@ -366,7 +309,7 @@ uint8_t *VFSReadFile(const char *filename, size_t *size) {
 		}
 	}
 	if (!fileSystemFound) {
-		ELOG("Missing filesystem for %s", filename);
+		ELOG("Missing filesystem for '%s'", filename);
 	}  // Otherwise, the file was just missing. No need to log.
 	return 0;
 }
@@ -374,7 +317,7 @@ uint8_t *VFSReadFile(const char *filename, size_t *size) {
 bool VFSGetFileListing(const char *path, std::vector<FileInfo> *listing, const char *filter) {
 	if (IsLocalPath(path)) {
 		// Local path, not VFS.
-		ILOG("Not a VFS path: %s . Reading local directory.", path);
+		// ILOG("Not a VFS path: %s . Reading local directory.", path);
 		getFilesInDir(path, listing, filter);
 		return true;
 	}
@@ -401,7 +344,7 @@ bool VFSGetFileListing(const char *path, std::vector<FileInfo> *listing, const c
 bool VFSGetFileInfo(const char *path, FileInfo *info) {
 	if (IsLocalPath(path)) {
 		// Local path, not VFS.
-		ILOG("Not a VFS path: %s . Getting local file info.", path);
+		// ILOG("Not a VFS path: %s . Getting local file info.", path);
 		return getFileInfo(path, info);
 	}
 

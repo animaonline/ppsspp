@@ -1,3 +1,4 @@
+#include "ppsspp_config.h"
 #include "base/display.h"
 #include "ui/ui.h"
 #include "ui/view.h"
@@ -5,83 +6,86 @@
 #include "gfx_es2/draw_buffer.h"
 #include "gfx_es2/draw_text.h"
 
-UIContext::UIContext()
-	: uishader_(0), uitexture_(0), uidrawbuffer_(0), uidrawbufferTop_(0) {
-	fontScaleX_ = 1.0f;
-	fontScaleY_ = 1.0f;
+#include "Common/Log.h"
+
+UIContext::UIContext() {
 	fontStyle_ = new UI::FontStyle();
 	bounds_ = Bounds(0, 0, dp_xres, dp_yres);
 }
 
 UIContext::~UIContext() {
+	sampler_->Release();
 	delete fontStyle_;
 	delete textDrawer_;
-	// Not releasing blend_, it's a preset. Should really make them AddRef, though..
-	depth_->Release();
 }
 
-void UIContext::Init(Thin3DContext *thin3d, Thin3DShaderSet *uishader, Thin3DShaderSet *uishadernotex, Thin3DTexture *uitexture, DrawBuffer *uidrawbuffer, DrawBuffer *uidrawbufferTop) {
-	thin3d_ = thin3d;
-	blend_ = thin3d_->GetBlendStatePreset(T3DBlendStatePreset::BS_STANDARD_ALPHA);
-	sampler_ = thin3d_->GetSamplerStatePreset(T3DSamplerStatePreset::SAMPS_LINEAR);
-	depth_ = thin3d_->CreateDepthStencilState(false, false, T3DComparison::LESS);
-
-	uishader_ = uishader;
-	uishadernotex_ = uishadernotex;
-	uitexture_ = uitexture;
+void UIContext::Init(Draw::DrawContext *thin3d, Draw::Pipeline *uipipe, Draw::Pipeline *uipipenotex, DrawBuffer *uidrawbuffer, DrawBuffer *uidrawbufferTop) {
+	using namespace Draw;
+	draw_ = thin3d;
+	sampler_ = draw_->CreateSamplerState({ TextureFilter::LINEAR, TextureFilter::LINEAR, TextureFilter::LINEAR });
+	ui_pipeline_ = uipipe;
+	ui_pipeline_notex_ = uipipenotex;
 	uidrawbuffer_ = uidrawbuffer;
 	uidrawbufferTop_ = uidrawbufferTop;
-#if defined(_WIN32) || defined(USING_QT_UI)
-	textDrawer_ = new TextDrawer(thin3d);
-#else
-	textDrawer_ = 0;
-#endif
+	textDrawer_ = TextDrawer::Create(thin3d);  // May return nullptr if no implementation is available for this platform.
+}
+
+void UIContext::BeginFrame() {
+	if (!uitexture_) {
+		uitexture_ = CreateTextureFromFile(draw_, "ui_atlas.zim", ImageFileType::ZIM, false);
+		if (!uitexture_) {
+			PanicAlert("Failed to load ui_atlas.zim.\n\nPlace it in the directory \"assets\" under your PPSSPP directory.");
+			FLOG("Failed to load ui_atlas.zim");
+		}
+	}
+	uidrawbufferTop_->SetCurZ(0.0f);
+	uidrawbuffer_->SetCurZ(0.0f);
+	ActivateTopScissor();
 }
 
 void UIContext::Begin() {
-	thin3d_->SetBlendState(blend_);
-	thin3d_->SetSamplerStates(0, 1, &sampler_);
-	thin3d_->SetDepthStencilState(depth_);
-	thin3d_->SetRenderState(T3DRenderState::CULL_MODE, T3DCullMode::NO_CULL);
-	thin3d_->SetTexture(0, uitexture_);
-	thin3d_->SetScissorEnabled(false);
-	UIBegin(uishader_);
+	draw_->BindSamplerStates(0, 1, &sampler_);
+	draw_->BindTexture(0, uitexture_->GetTexture());
+	UIBegin(ui_pipeline_);
 }
 
 void UIContext::BeginNoTex() {
-	thin3d_->SetBlendState(blend_);
-	thin3d_->SetSamplerStates(0, 1, &sampler_);
-	thin3d_->SetRenderState(T3DRenderState::CULL_MODE, T3DCullMode::NO_CULL);
+	draw_->BindSamplerStates(0, 1, &sampler_);
+	UIBegin(ui_pipeline_notex_);
+}
 
-	UIBegin(uishadernotex_);
+void UIContext::BeginPipeline(Draw::Pipeline *pipeline, Draw::SamplerState *samplerState) {
+	draw_->BindSamplerStates(0, 1, &sampler_);
+	draw_->BindTexture(0, uitexture_->GetTexture());
+	UIBegin(pipeline);
 }
 
 void UIContext::RebindTexture() const {
-	thin3d_->SetTexture(0, uitexture_);
+	draw_->BindTexture(0, uitexture_->GetTexture());
 }
 
 void UIContext::Flush() {
 	if (uidrawbuffer_) {
-		uidrawbuffer_->End();
 		uidrawbuffer_->Flush();
 	}
 	if (uidrawbufferTop_) {
-		uidrawbufferTop_->End();
 		uidrawbufferTop_->Flush();
 	}
 }
 
-void UIContext::End() {
-	UIEnd();
-	Flush();
+void UIContext::SetCurZ(float curZ) {
+	ui_draw2d.SetCurZ(curZ);
+	ui_draw2d_front.SetCurZ(curZ);
 }
 
-// TODO: Support transformed bounds using stencil
+// TODO: Support transformed bounds using stencil instead.
 void UIContext::PushScissor(const Bounds &bounds) {
 	Flush();
-	Bounds clipped = bounds;
+	Bounds clipped = TransformBounds(bounds);
 	if (scissorStack_.size())
 		clipped.Clip(scissorStack_.back());
+	else
+		clipped.Clip(bounds_);
 	scissorStack_.push_back(clipped);
 	ActivateTopScissor();
 }
@@ -100,17 +104,19 @@ Bounds UIContext::GetScissorBounds() {
 }
 
 void UIContext::ActivateTopScissor() {
+	Bounds bounds;
 	if (scissorStack_.size()) {
-		const Bounds &bounds = scissorStack_.back();
-		float scale = pixel_in_dps;
-		int x = scale * bounds.x;
-		int y = scale * bounds.y;
-		int w = scale * bounds.w;
-		int h = scale * bounds.h;
-		thin3d_->SetScissorRect(x, y, w, h);
-		thin3d_->SetScissorEnabled(true);
+		float scale_x = pixel_in_dps_x;
+		float scale_y = pixel_in_dps_y;
+		bounds = scissorStack_.back();
+		int x = floorf(scale_x * bounds.x);
+		int y = floorf(scale_y * bounds.y);
+		int w = ceilf(scale_x * bounds.w);
+		int h = ceilf(scale_y * bounds.h);
+		draw_->SetScissorRect(x, y, w, h);
 	} else {
-		thin3d_->SetScissorEnabled(false);
+		// Avoid rounding errors
+		draw_->SetScissorRect(0, 0, pixel_xres, pixel_yres);
 	}
 }
 
@@ -127,19 +133,33 @@ void UIContext::SetFontStyle(const UI::FontStyle &fontStyle) {
 	}
 }
 
-void UIContext::MeasureText(const UI::FontStyle &style, const char *str, float *x, float *y, int align) const {
-	MeasureTextCount(style, str, (int)strlen(str), x, y, align);
+void UIContext::MeasureText(const UI::FontStyle &style, float scaleX, float scaleY, const char *str, float *x, float *y, int align) const {
+	MeasureTextCount(style, scaleX, scaleY, str, (int)strlen(str), x, y, align);
 }
 
-void UIContext::MeasureTextCount(const UI::FontStyle &style, const char *str, int count, float *x, float *y, int align) const {
+void UIContext::MeasureTextCount(const UI::FontStyle &style, float scaleX, float scaleY, const char *str, int count, float *x, float *y, int align) const {
 	if (!textDrawer_ || (align & FLAG_DYNAMIC_ASCII)) {
 		float sizeFactor = (float)style.sizePts / 24.0f;
-		Draw()->SetFontScale(fontScaleX_ * sizeFactor, fontScaleY_ * sizeFactor);
+		Draw()->SetFontScale(scaleX * sizeFactor, scaleY * sizeFactor);
 		Draw()->MeasureTextCount(style.atlasFont, str, count, x, y);
 	} else {
-		textDrawer_->SetFontScale(fontScaleX_, fontScaleY_);
-		std::string subset(str, count);
-		textDrawer_->MeasureString(subset.c_str(), x, y);
+		textDrawer_->SetFont(style.fontName.c_str(), style.sizePts, style.flags);
+		textDrawer_->SetFontScale(scaleX, scaleY);
+		textDrawer_->MeasureString(str, count, x, y);
+		textDrawer_->SetFont(fontStyle_->fontName.c_str(), fontStyle_->sizePts, fontStyle_->flags);
+	}
+}
+
+void UIContext::MeasureTextRect(const UI::FontStyle &style, float scaleX, float scaleY, const char *str, int count, const Bounds &bounds, float *x, float *y, int align) const {
+	if (!textDrawer_ || (align & FLAG_DYNAMIC_ASCII)) {
+		float sizeFactor = (float)style.sizePts / 24.0f;
+		Draw()->SetFontScale(scaleX * sizeFactor, scaleY * sizeFactor);
+		Draw()->MeasureTextRect(style.atlasFont, str, count, bounds, x, y, align);
+	} else {
+		textDrawer_->SetFont(style.fontName.c_str(), style.sizePts, style.flags);
+		textDrawer_->SetFontScale(scaleX, scaleY);
+		textDrawer_->MeasureStringRect(str, count, bounds, x, y, align);
+		textDrawer_->SetFont(fontStyle_->fontName.c_str(), fontStyle_->sizePts, fontStyle_->flags);
 	}
 }
 
@@ -168,7 +188,10 @@ void UIContext::DrawTextRect(const char *str, const Bounds &bounds, uint32_t col
 		Draw()->DrawTextRect(fontStyle_->atlasFont, str, bounds.x, bounds.y, bounds.w, bounds.h, color, align);
 	} else {
 		textDrawer_->SetFontScale(fontScaleX_, fontScaleY_);
-		textDrawer_->DrawStringRect(*Draw(), str, bounds, color, align);
+		Bounds rounded = bounds;
+		rounded.x = floorf(rounded.x);
+		rounded.y = floorf(rounded.y);
+		textDrawer_->DrawStringRect(*Draw(), str, rounded, color, align);
 		RebindTexture();
 	}
 }
@@ -191,4 +214,45 @@ void UIContext::FillRect(const UI::Drawable &drawable, const Bounds &bounds) {
 	case UI::DRAW_NOTHING:
 		break;
 	} 
+}
+
+void UIContext::PushTransform(const UITransform &transform) {
+	Flush();
+
+	Matrix4x4 m = Draw()->GetDrawMatrix();
+	const Vec3 &t = transform.translate;
+	Vec3 scaledTranslate = Vec3(
+		t.x * m.xx + t.y * m.xy + t.z * m.xz + m.xw,
+		t.x * m.yx + t.y * m.yy + t.z * m.yz + m.yw,
+		t.x * m.zx + t.y * m.zy + t.z * m.zz + m.zw);
+
+	m.translateAndScale(scaledTranslate, transform.scale);
+	Draw()->PushDrawMatrix(m);
+	Draw()->PushAlpha(transform.alpha);
+
+	transformStack_.push_back(transform);
+}
+
+void UIContext::PopTransform() {
+	Flush();
+
+	transformStack_.pop_back();
+
+	Draw()->PopDrawMatrix();
+	Draw()->PopAlpha();
+}
+
+Bounds UIContext::TransformBounds(const Bounds &bounds) {
+	if (!transformStack_.empty()) {
+		const UITransform t = transformStack_.back();
+		Bounds translated = bounds.Offset(t.translate.x, t.translate.y);
+
+		// Scale around the center as the origin.
+		float scaledX = (translated.x - dp_xres * 0.5f) * t.scale.x + dp_xres * 0.5f;
+		float scaledY = (translated.y - dp_yres * 0.5f) * t.scale.y + dp_yres * 0.5f;
+
+		return Bounds(scaledX, scaledY, translated.w * t.scale.x, translated.h * t.scale.y);
+	}
+
+	return bounds;
 }

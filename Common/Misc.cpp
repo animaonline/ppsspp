@@ -20,7 +20,7 @@
 
 #include <string.h>
 
-#if defined(__APPLE__) || defined(__SYMBIAN32__)
+#if defined(__APPLE__)
 #define __thread
 #endif
 
@@ -33,38 +33,32 @@
 // This function might change the error code.
 const char *GetLastErrorMsg()
 {
-#ifndef _XBOX
 #ifdef _WIN32
 	return GetStringErrorMsg(GetLastError());
 #else
 	return GetStringErrorMsg(errno);
 #endif
-#else
-	return "GetLastErrorMsg";
-#endif
 }
 
 const char *GetStringErrorMsg(int errCode) {
 	static const size_t buff_size = 1023;
-#ifndef _XBOX
 #ifdef _WIN32
-	static __declspec(thread) wchar_t err_strw[buff_size] = {};
+	static __THREAD wchar_t err_strw[buff_size] = {};
 
 	FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, NULL, errCode,
 		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
 		err_strw, buff_size, NULL);
 
-	static __declspec(thread) char err_str[buff_size] = {};
-	snprintf(err_str, buff_size, ConvertWStringToUTF8(err_strw).c_str());
+	static __THREAD char err_str[buff_size] = {};
+	snprintf(err_str, buff_size, "%s", ConvertWStringToUTF8(err_strw).c_str());
 #else
 	static __thread char err_str[buff_size] = {};
 
 	// Thread safe (XSI-compliant)
-	strerror_r(errCode, err_str, buff_size);
+	if (strerror_r(errCode, err_str, buff_size) == 0) {
+		return "Unknown error";
+	}
 #endif
 
 	return err_str;
-#else
-	return "GetStringErrorMsg";
-#endif
 }

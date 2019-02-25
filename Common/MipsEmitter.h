@@ -16,10 +16,6 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #pragma once
-// Symbian can't build this due to an old gcc/lib combination, and doesn't need to.
-// Kind programmer, if you want to translate this to a proper feature-detection
-// define, please feel free to.
-#ifndef __SYMBIAN32__
 
 #include <functional>
 #include <vector>
@@ -299,11 +295,6 @@ public:
 		return ptr >= region && ptr < region + region_size;
 	}
 
-	// Can possibly be undone. Will write protect the entire code region.
-	// Start over if you need to change the code, though (call FreeCodeSpace(), AllocCodeSpace().)
-	void WriteProtect();
-	void UnWriteProtect();
-
 	void ResetCodePtr() {
 		SetCodePtr(region);
 	}
@@ -326,5 +317,3 @@ protected:
 };
 
 };
-
-#endif

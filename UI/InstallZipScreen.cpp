@@ -23,6 +23,7 @@
 #include "UI/ui_atlas.h"
 #include "file/file_util.h"
 
+#include "Common/StringUtils.h"
 #include "Core/Util/GameManager.h"
 #include "UI/InstallZipScreen.h"
 #include "UI/MainScreen.h"
@@ -43,8 +44,9 @@ void InstallZipScreen::CreateViews() {
 	ViewGroup *leftColumn = new AnchorLayout(new LinearLayoutParams(1.0f));
 	root_->Add(leftColumn);
 
+	std::string shortFilename = GetFilenameFromPath(zipPath_);
 	leftColumn->Add(new TextView(iz->T("Install game from ZIP file?"), ALIGN_LEFT, false, new AnchorLayoutParams(10, 10, NONE, NONE)));
-	leftColumn->Add(new TextView(zipPath_, ALIGN_LEFT, false, new AnchorLayoutParams(10, 60, NONE, NONE)));
+	leftColumn->Add(new TextView(shortFilename, ALIGN_LEFT, false, new AnchorLayoutParams(10, 60, NONE, NONE)));
 
 	doneView_ = leftColumn->Add(new TextView("", new AnchorLayoutParams(10, 120, NONE, NONE)));
 	progressBar_ = leftColumn->Add(new ProgressBar(new AnchorLayoutParams(10, 200, 200, NONE)));
@@ -61,8 +63,8 @@ void InstallZipScreen::CreateViews() {
 }
 
 bool InstallZipScreen::key(const KeyInput &key) {
-	// Ignore all key presses during installation to avoid user escape
-	if (!g_GameManager.IsInstallInProgress()) {
+	// Ignore all key presses during download and installation to avoid user escape
+	if (g_GameManager.GetState() == GameManagerState::IDLE) {
 		return UIScreen::key(key);
 	}
 	return false;
@@ -76,13 +78,13 @@ UI::EventReturn InstallZipScreen::OnInstall(UI::EventParams &params) {
 	return UI::EVENT_DONE;
 }
 
-void InstallZipScreen::update(InputState &input) {
+void InstallZipScreen::update() {
 	I18NCategory *iz = GetI18NCategory("InstallZip");
 
 	using namespace UI;
-	if (g_GameManager.IsInstallInProgress()) {
+	if (g_GameManager.GetState() != GameManagerState::IDLE) {
 		progressBar_->SetVisibility(V_VISIBLE);
-		progressBar_->SetProgress(g_GameManager.GetCurrentInstallProgress());
+		progressBar_->SetProgress(g_GameManager.GetCurrentInstallProgressPercentage());
 		backChoice_->SetEnabled(false);
 	} else {
 		progressBar_->SetVisibility(V_GONE);
@@ -95,5 +97,5 @@ void InstallZipScreen::update(InputState &input) {
 			MainScreen::showHomebrewTab = true;
 		}
 	}
-	UIScreen::update(input);
+	UIScreen::update();
 }

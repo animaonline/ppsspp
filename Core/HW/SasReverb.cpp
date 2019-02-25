@@ -15,12 +15,12 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include <stdint.h>
+#include <cstdint>
+#include <cstring>
 
 #include "base/basictypes.h"
-#include "Globals.h"
 #include "Core/HW/SasReverb.h"
-
+#include "Core/Util/AudioFormat.h"
 
 // This is under the assumption that the reverb used in Sas is the same as the PSX SPU reverb.
 
@@ -182,7 +182,7 @@ void SasReverb::SetPreset(int preset) {
 template<int bufsize>
 class BufferWrapper {
 public:
-	BufferWrapper(int16_t *buffer, int position, int usedSize) : buf_(buffer), pos_(position), base_(bufsize - usedSize), end_(bufsize), size_(usedSize) {}
+	BufferWrapper(int16_t *buffer, int position, int usedSize) : buf_(buffer), pos_(position), end_(bufsize), base_(bufsize - usedSize), size_(usedSize) {}
 	int16_t &operator [](int index) {
 		int addr = pos_ + index;
 		if (addr >= end_) { addr -= size_; }

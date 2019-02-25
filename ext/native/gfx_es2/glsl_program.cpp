@@ -49,7 +49,6 @@ GLSLProgram *glsl_create(const char *vshader, const char *fshader, std::string *
 		delete program;
 		return 0;
 	}
-	register_gl_resource_holder(program);
 	return program;
 }
 
@@ -70,12 +69,11 @@ GLSLProgram *glsl_create_source(const char *vshader_src, const char *fshader_src
 		delete program;
 		return 0;
 	}
-	register_gl_resource_holder(program);
 	return program;
 }
 
 // Not wanting to change ReadLocalFile semantics.
-// Needs to use delete [], not delete like auto_ptr, and can't use unique_ptr because of Symbian.
+// TODO: Use C++11 unique_ptr, remove delete[]
 struct AutoCharArrayBuf {
 	AutoCharArrayBuf(char *buf = nullptr) : buf_(buf) {
 	}
@@ -220,24 +218,6 @@ bool glsl_recompile(GLSLProgram *program, std::string *error_message) {
 	return true;
 }
 
-void GLSLProgram::GLRestore() {
-	// Quoth http://developer.android.com/reference/android/opengl/GLSurfaceView.Renderer.html;
-	// "Note that when the EGL context is lost, all OpenGL resources associated with that context will be automatically deleted. 
-	// You do not need to call the corresponding "glDelete" methods such as glDeleteTextures to manually delete these lost resources."
-	// Hence, we comment out:
-	// glDeleteShader(this->vsh_);
-	// glDeleteShader(this->fsh_);
-	// glDeleteProgram(this->program_);
-	this->program_ = 0;
-	this->vsh_ = 0;
-	this->fsh_ = 0;
-	ILOG("Restoring GLSL program %s/%s",
-		strlen(this->vshader_filename) > 0 ? this->vshader_filename : "(mem)",
-		strlen(this->fshader_filename) > 0 ? this->fshader_filename : "(mem)");
-	glsl_recompile(this);
-	// Note that any shader uniforms are still lost, hopefully the client sets them every frame at a minimum...
-}
-
 int glsl_attrib_loc(const GLSLProgram *program, const char *name) {
 	return glGetAttribLocation(program->program_, name);
 }
@@ -248,7 +228,6 @@ int glsl_uniform_loc(const GLSLProgram *program, const char *name) {
 
 void glsl_destroy(GLSLProgram *program) {
 	if (program) {
-		unregister_gl_resource_holder(program);
 		glDeleteShader(program->vsh_);
 		glDeleteShader(program->fsh_);
 		glDeleteProgram(program->program_);
@@ -259,13 +238,21 @@ void glsl_destroy(GLSLProgram *program) {
 	delete program;
 }
 
+static const GLSLProgram *curProgram;
+
 void glsl_bind(const GLSLProgram *program) {
 	if (program)
 		glUseProgram(program->program_);
 	else
 		glUseProgram(0);
+	curProgram = program;
 }
 
 void glsl_unbind() {
 	glUseProgram(0);
+	curProgram = nullptr;
+}
+
+const GLSLProgram *glsl_get_program() {
+	return curProgram;
 }

@@ -15,6 +15,9 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "ppsspp_config.h"
+#if PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)
+
 #include "Core/MemMap.h"
 #include "Core/MIPS/MIPSAnalyst.h"
 #include "Core/Config.h"
@@ -39,7 +42,7 @@
 // Currently known non working ones should have DISABLE.
 
 // #define CONDITIONAL_DISABLE { Comp_Generic(op); return; }
-#define CONDITIONAL_DISABLE ;
+#define CONDITIONAL_DISABLE(flag) if (jo.Disabled(JitDisable::flag)) { Comp_Generic(op); return; }
 #define DISABLE { Comp_Generic(op); return; }
 
 namespace MIPSComp {
@@ -47,7 +50,7 @@ namespace MIPSComp {
 
 	void Jit::CompITypeMemRead(MIPSOpcode op, u32 bits, void (XEmitter::*mov)(int, int, X64Reg, OpArg), const void *safeFunc)
 	{
-		CONDITIONAL_DISABLE;
+		CONDITIONAL_DISABLE(LSU);
 		int offset = _IMM16;
 		MIPSGPReg rt = _RT;
 		MIPSGPReg rs = _RS;
@@ -78,7 +81,7 @@ namespace MIPSComp {
 
 	void Jit::CompITypeMemWrite(MIPSOpcode op, u32 bits, const void *safeFunc)
 	{
-		CONDITIONAL_DISABLE;
+		CONDITIONAL_DISABLE(LSU);
 		int offset = _IMM16;
 		MIPSGPReg rt = _RT;
 		MIPSGPReg rs = _RS;
@@ -134,7 +137,7 @@ namespace MIPSComp {
 
 	void Jit::CompITypeMemUnpairedLR(MIPSOpcode op, bool isStore)
 	{
-		CONDITIONAL_DISABLE;
+		CONDITIONAL_DISABLE(LSU);
 		int o = op>>26;
 		int offset = _IMM16;
 		MIPSGPReg rt = _RT;
@@ -159,7 +162,6 @@ namespace MIPSComp {
 
 		{
 			JitSafeMem safe(this, rs, offset, ~3);
-			safe.SetFar();
 			OpArg src;
 			if (safe.PrepareRead(src, 4))
 			{
@@ -191,7 +193,7 @@ namespace MIPSComp {
 
 	void Jit::CompITypeMemUnpairedLRInner(MIPSOpcode op, X64Reg shiftReg)
 	{
-		CONDITIONAL_DISABLE;
+		CONDITIONAL_DISABLE(LSU);
 		int o = op>>26;
 		MIPSGPReg rt = _RT;
 
@@ -283,7 +285,7 @@ namespace MIPSComp {
 
 	void Jit::Comp_ITypeMem(MIPSOpcode op)
 	{
-		CONDITIONAL_DISABLE;
+		CONDITIONAL_DISABLE(LSU);
 		int offset = _IMM16;
 		MIPSGPReg rt = _RT;
 		MIPSGPReg rs = _RS;
@@ -332,7 +334,7 @@ namespace MIPSComp {
 				MIPSOpcode nextOp = GetOffsetInstruction(1);
 				// Looking for lwr rd, offset-3(rs) which makes a pair.
 				u32 desiredOp = ((op & 0xFFFF0000) + (4 << 26)) + (offset - 3);
-				if (!js.inDelaySlot && nextOp == desiredOp)
+				if (!js.inDelaySlot && nextOp == desiredOp && !jo.Disabled(JitDisable::LSU_UNALIGNED))
 				{
 					EatInstruction(nextOp);
 					// nextOp has the correct address.
@@ -348,7 +350,7 @@ namespace MIPSComp {
 				MIPSOpcode nextOp = GetOffsetInstruction(1);
 				// Looking for lwl rd, offset+3(rs) which makes a pair.
 				u32 desiredOp = ((op & 0xFFFF0000) - (4 << 26)) + (offset + 3);
-				if (!js.inDelaySlot && nextOp == desiredOp)
+				if (!js.inDelaySlot && nextOp == desiredOp && !jo.Disabled(JitDisable::LSU_UNALIGNED))
 				{
 					EatInstruction(nextOp);
 					// op has the correct address.
@@ -364,7 +366,7 @@ namespace MIPSComp {
 				MIPSOpcode nextOp = GetOffsetInstruction(1);
 				// Looking for swr rd, offset-3(rs) which makes a pair.
 				u32 desiredOp = ((op & 0xFFFF0000) + (4 << 26)) + (offset - 3);
-				if (!js.inDelaySlot && nextOp == desiredOp)
+				if (!js.inDelaySlot && nextOp == desiredOp && !jo.Disabled(JitDisable::LSU_UNALIGNED))
 				{
 					EatInstruction(nextOp);
 					// nextOp has the correct address.
@@ -380,7 +382,7 @@ namespace MIPSComp {
 				MIPSOpcode nextOp = GetOffsetInstruction(1);
 				// Looking for swl rd, offset+3(rs) which makes a pair.
 				u32 desiredOp = ((op & 0xFFFF0000) - (4 << 26)) + (offset + 3);
-				if (!js.inDelaySlot && nextOp == desiredOp)
+				if (!js.inDelaySlot && nextOp == desiredOp && !jo.Disabled(JitDisable::LSU_UNALIGNED))
 				{
 					EatInstruction(nextOp);
 					// op has the correct address.
@@ -402,3 +404,5 @@ namespace MIPSComp {
 		DISABLE;
 	}
 }
+
+#endif // PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)

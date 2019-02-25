@@ -16,72 +16,84 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include <algorithm>
+
 #include "base/stringutil.h"
 #include "Common/Common.h"
 #include "Core/FileLoaders/HTTPFileLoader.h"
 
 HTTPFileLoader::HTTPFileLoader(const std::string &filename)
-	: filesize_(0), filepos_(0), url_(filename), filename_(filename), connected_(false) {
-	if (!client_.Resolve(url_.Host().c_str(), url_.Port())) {
-		// TODO: Should probably set some flag?
-		return;
-	}
+	: url_(filename), filename_(filename) {
+}
 
-	Connect();
-	int err = client_.SendRequest("HEAD", url_.Resource().c_str());
-	if (err < 0) {
-		Disconnect();
-		return;
-	}
+void HTTPFileLoader::Prepare() {
+	std::call_once(preparedFlag_, [this](){
+		if (!client_.Resolve(url_.Host().c_str(), url_.Port())) {
+			ERROR_LOG(LOADER, "HTTP request failed, unable to resolve: %s port %d", url_.Host().c_str(), url_.Port());
+			latestError_ = "Could not connect (name not resolved)";
+			return;
+		}
 
-	Buffer readbuf;
-	std::vector<std::string> responseHeaders;
-	int code = client_.ReadResponseHeaders(&readbuf, responseHeaders);
-	if (code != 200) {
-		// Leave size at 0, invalid.
-		ERROR_LOG(LOADER, "HTTP request failed, got %03d for %s", code, filename.c_str());
-		Disconnect();
-		return;
-	}
+		client_.SetDataTimeout(20.0);
+		Connect();
+		if (!connected_) {
+			ERROR_LOG(LOADER, "HTTP request failed, failed to connect: %s port %d", url_.Host().c_str(), url_.Port());
+			latestError_ = "Could not connect (refused to connect)";
+			return;
+		}
 
-	// TODO: Expire cache via ETag, etc.
-	bool acceptsRange = false;
-	for (std::string header : responseHeaders) {
-		if (startsWithNoCase(header, "Content-Length:")) {
-			size_t size_pos = header.find_first_of(' ');
-			if (size_pos != header.npos) {
-				size_pos = header.find_first_not_of(' ', size_pos);
+		int err = client_.SendRequest("HEAD", url_.Resource().c_str());
+		if (err < 0) {
+			ERROR_LOG(LOADER, "HTTP request failed, failed to send request: %s port %d", url_.Host().c_str(), url_.Port());
+			latestError_ = "Could not connect (could not request data)";
+			Disconnect();
+			return;
+		}
+
+		Buffer readbuf;
+		std::vector<std::string> responseHeaders;
+		int code = client_.ReadResponseHeaders(&readbuf, responseHeaders);
+		if (code != 200) {
+			// Leave size at 0, invalid.
+			ERROR_LOG(LOADER, "HTTP request failed, got %03d for %s", code, filename_.c_str());
+			latestError_ = "Could not connect (invalid response)";
+			Disconnect();
+			return;
+		}
+
+		// TODO: Expire cache via ETag, etc.
+		bool acceptsRange = false;
+		for (std::string header : responseHeaders) {
+			if (startsWithNoCase(header, "Content-Length:")) {
+				size_t size_pos = header.find_first_of(' ');
+				if (size_pos != header.npos) {
+					size_pos = header.find_first_not_of(' ', size_pos);
+				}
+				if (size_pos != header.npos) {
+					filesize_ = atoll(&header[size_pos]);
+				}
 			}
-			if (size_pos != header.npos) {
-				// TODO: Find a way to get this to work right on Symbian?
-#ifndef __SYMBIAN32__
-				filesize_ = atoll(&header[size_pos]);
-#else
-				filesize_ = atoi(&header[size_pos]);
-#endif
+			if (startsWithNoCase(header, "Accept-Ranges:")) {
+				std::string lowerHeader = header;
+				std::transform(lowerHeader.begin(), lowerHeader.end(), lowerHeader.begin(), tolower);
+				// TODO: Delimited.
+				if (lowerHeader.find("bytes") != lowerHeader.npos) {
+					acceptsRange = true;
+				}
 			}
 		}
-		if (startsWithNoCase(header, "Accept-Ranges:")) {
-			std::string lowerHeader = header;
-			std::transform(lowerHeader.begin(), lowerHeader.end(), lowerHeader.begin(), tolower);
-			// TODO: Delimited.
-			if (lowerHeader.find("bytes") != lowerHeader.npos) {
-				acceptsRange = true;
-			}
+
+		// TODO: Keepalive instead.
+		Disconnect();
+
+		if (!acceptsRange) {
+			WARN_LOG(LOADER, "HTTP server did not advertise support for range requests.");
 		}
-	}
+		if (filesize_ == 0) {
+			ERROR_LOG(LOADER, "Could not determine file size for %s", filename_.c_str());
+		}
 
-	// TODO: Keepalive instead.
-	Disconnect();
-
-	if (!acceptsRange) {
-		WARN_LOG(LOADER, "HTTP server did not advertise support for range requests.");
-	}
-	if (filesize_ == 0) {
-		ERROR_LOG(LOADER, "Could not determine file size for %s", filename.c_str());
-	}
-
-	// If we didn't end up with a filesize_ (e.g. chunked response), give up.  File invalid.
+		// If we didn't end up with a filesize_ (e.g. chunked response), give up.  File invalid.
+	});
 }
 
 HTTPFileLoader::~HTTPFileLoader() {
@@ -89,7 +101,12 @@ HTTPFileLoader::~HTTPFileLoader() {
 }
 
 bool HTTPFileLoader::Exists() {
+	Prepare();
 	return url_.Valid() && filesize_ > 0;
+}
+
+bool HTTPFileLoader::ExistsFast() {
+	return url_.Valid();
 }
 
 bool HTTPFileLoader::IsDirectory() {
@@ -98,6 +115,7 @@ bool HTTPFileLoader::IsDirectory() {
 }
 
 s64 HTTPFileLoader::FileSize() {
+	Prepare();
 	return filesize_;
 }
 
@@ -105,11 +123,10 @@ std::string HTTPFileLoader::Path() const {
 	return filename_;
 }
 
-void HTTPFileLoader::Seek(s64 absolutePos) {
-	filepos_ = absolutePos;
-}
+size_t HTTPFileLoader::ReadAt(s64 absolutePos, size_t bytes, void *data, Flags flags) {
+	Prepare();
+	std::lock_guard<std::mutex> guard(readAtMutex_);
 
-size_t HTTPFileLoader::ReadAt(s64 absolutePos, size_t bytes, void *data) {
 	s64 absoluteEnd = std::min(absolutePos + (s64)bytes, filesize_);
 	if (absolutePos >= filesize_ || bytes == 0) {
 		// Read outside of the file or no read at all, just fail immediately.
@@ -117,6 +134,9 @@ size_t HTTPFileLoader::ReadAt(s64 absolutePos, size_t bytes, void *data) {
 	}
 
 	Connect();
+	if (!connected_) {
+		return 0;
+	}
 
 	char requestHeaders[4096];
 	// Note that the Range header is *inclusive*.
@@ -125,6 +145,7 @@ size_t HTTPFileLoader::ReadAt(s64 absolutePos, size_t bytes, void *data) {
 
 	int err = client_.SendRequest("GET", url_.Resource().c_str(), requestHeaders, nullptr);
 	if (err < 0) {
+		latestError_ = "Invalid response reading data";
 		Disconnect();
 		return 0;
 	}
@@ -134,6 +155,7 @@ size_t HTTPFileLoader::ReadAt(s64 absolutePos, size_t bytes, void *data) {
 	int code = client_.ReadResponseHeaders(&readbuf, responseHeaders);
 	if (code != 206) {
 		ERROR_LOG(LOADER, "HTTP server did not respond with range, received code=%03d", code);
+		latestError_ = "Invalid response reading data";
 		Disconnect();
 		return 0;
 	}
@@ -172,6 +194,7 @@ size_t HTTPFileLoader::ReadAt(s64 absolutePos, size_t bytes, void *data) {
 
 	if (!supportedResponse) {
 		ERROR_LOG(LOADER, "HTTP server did not respond with the range we wanted.");
+		latestError_ = "Invalid response reading data";
 		return 0;
 	}
 
@@ -179,4 +202,12 @@ size_t HTTPFileLoader::ReadAt(s64 absolutePos, size_t bytes, void *data) {
 	output.Take(readBytes, (char *)data);
 	filepos_ = absolutePos + readBytes;
 	return readBytes;
+}
+
+void HTTPFileLoader::Connect() {
+	if (!connected_) {
+		cancelConnect_ = false;
+		// Latency is important here, so reduce the timeout.
+		connected_ = client_.Connect(3, 10.0, &cancelConnect_);
+	}
 }

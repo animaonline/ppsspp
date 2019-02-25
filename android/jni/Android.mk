@@ -28,7 +28,8 @@ ARCH_FILES := \
   $(SRC)/Core/MIPS/x86/JitSafeMem.cpp \
   $(SRC)/Core/MIPS/x86/RegCache.cpp \
   $(SRC)/Core/MIPS/x86/RegCacheFPU.cpp \
-  $(SRC)/GPU/Common/VertexDecoderX86.cpp
+  $(SRC)/GPU/Common/VertexDecoderX86.cpp \
+  $(SRC)/GPU/Software/SamplerX86.cpp
 endif
 
 ifeq ($(TARGET_ARCH_ABI),x86_64)
@@ -48,7 +49,8 @@ ARCH_FILES := \
   $(SRC)/Core/MIPS/x86/JitSafeMem.cpp \
   $(SRC)/Core/MIPS/x86/RegCache.cpp \
   $(SRC)/Core/MIPS/x86/RegCacheFPU.cpp \
-  $(SRC)/GPU/Common/VertexDecoderX86.cpp
+  $(SRC)/GPU/Common/VertexDecoderX86.cpp \
+  $(SRC)/GPU/Software/SamplerX86.cpp
 endif
 
 ifeq ($(findstring armeabi-v7a,$(TARGET_ARCH_ABI)),armeabi-v7a)
@@ -57,7 +59,6 @@ ARCH_FILES := \
   $(SRC)/Core/Util/AudioFormatNEON.cpp.neon \
   $(SRC)/Common/ArmEmitter.cpp \
   $(SRC)/Common/ArmCPUDetect.cpp \
-  $(SRC)/Common/ArmThunk.cpp \
   $(SRC)/Common/ColorConvNEON.cpp.neon \
   $(SRC)/Core/MIPS/ARM/ArmCompALU.cpp \
   $(SRC)/Core/MIPS/ARM/ArmCompBranch.cpp \
@@ -102,7 +103,6 @@ ifeq ($(TARGET_ARCH_ABI),armeabi)
 ARCH_FILES := \
   $(SRC)/Common/ArmEmitter.cpp \
   $(SRC)/Common/ArmCPUDetect.cpp \
-  $(SRC)/Common/ArmThunk.cpp \
   $(SRC)/Core/MIPS/ARM/ArmCompALU.cpp \
   $(SRC)/Core/MIPS/ARM/ArmCompBranch.cpp \
   $(SRC)/Core/MIPS/ARM/ArmCompFPU.cpp \
@@ -127,6 +127,7 @@ EGL_FILES := \
 VULKAN_FILES := \
   $(SRC)/Common/Vulkan/VulkanLoader.cpp \
   $(SRC)/Common/Vulkan/VulkanContext.cpp \
+  $(SRC)/Common/Vulkan/VulkanDebug.cpp \
   $(SRC)/Common/Vulkan/VulkanImage.cpp \
   $(SRC)/Common/Vulkan/VulkanMemory.cpp \
   $(SRC)/GPU/Vulkan/FragmentShaderGeneratorVulkan.cpp \
@@ -136,22 +137,32 @@ VULKAN_FILES := \
   $(SRC)/GPU/Vulkan/PipelineManagerVulkan.cpp \
   $(SRC)/GPU/Vulkan/ShaderManagerVulkan.cpp \
   $(SRC)/GPU/Vulkan/StateMappingVulkan.cpp \
+  $(SRC)/GPU/Vulkan/StencilBufferVulkan.cpp \
   $(SRC)/GPU/Vulkan/TextureCacheVulkan.cpp \
   $(SRC)/GPU/Vulkan/TextureScalerVulkan.cpp \
   $(SRC)/GPU/Vulkan/DepalettizeShaderVulkan.cpp \
   $(SRC)/GPU/Vulkan/VertexShaderGeneratorVulkan.cpp \
-  $(SRC)/GPU/Vulkan/VulkanUtil.cpp
+  $(SRC)/GPU/Vulkan/VulkanUtil.cpp \
+  $(SRC)/GPU/Vulkan/DebugVisVulkan.cpp
 #endif
+
+SPIRV_CROSS_FILES := \
+  $(SRC)/ext/SPIRV-Cross/spirv_cfg.cpp \
+  $(SRC)/ext/SPIRV-Cross/spirv_cross.cpp \
+  $(SRC)/ext/SPIRV-Cross/spirv_cross_util.cpp \
+  $(SRC)/ext/SPIRV-Cross/spirv_glsl.cpp
 
 EXEC_AND_LIB_FILES := \
   $(ARCH_FILES) \
   $(EGL_FILES) \
   $(VULKAN_FILES) \
+  $(SPIRV_CROSS_FILES) \
   TestRunner.cpp \
   $(SRC)/Core/MIPS/MIPS.cpp.arm \
   $(SRC)/Core/MIPS/MIPSAnalyst.cpp \
   $(SRC)/Core/MIPS/MIPSDis.cpp \
   $(SRC)/Core/MIPS/MIPSDisVFPU.cpp \
+  $(SRC)/Core/MIPS/MIPSAsm.cpp \
   $(SRC)/Core/MIPS/MIPSInt.cpp.arm \
   $(SRC)/Core/MIPS/MIPSIntVFPU.cpp.arm \
   $(SRC)/Core/MIPS/MIPSStackWalk.cpp \
@@ -159,8 +170,18 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/MIPS/MIPSVFPUUtils.cpp.arm \
   $(SRC)/Core/MIPS/MIPSCodeUtils.cpp.arm \
   $(SRC)/Core/MIPS/MIPSDebugInterface.cpp \
+  $(SRC)/Core/MIPS/IR/IRFrontend.cpp \
+  $(SRC)/Core/MIPS/IR/IRJit.cpp \
+  $(SRC)/Core/MIPS/IR/IRCompALU.cpp \
+  $(SRC)/Core/MIPS/IR/IRCompBranch.cpp \
+  $(SRC)/Core/MIPS/IR/IRCompFPU.cpp \
+  $(SRC)/Core/MIPS/IR/IRCompLoadStore.cpp \
+  $(SRC)/Core/MIPS/IR/IRCompVFPU.cpp \
+  $(SRC)/Core/MIPS/IR/IRInst.cpp \
+  $(SRC)/Core/MIPS/IR/IRInterpreter.cpp \
+  $(SRC)/Core/MIPS/IR/IRPassSimplify.cpp \
+  $(SRC)/Core/MIPS/IR/IRRegCache.cpp \
   $(SRC)/UI/ui_atlas.cpp \
-  $(SRC)/UI/OnScreenDisplay.cpp \
   $(SRC)/ext/libkirk/AES.c \
   $(SRC)/ext/libkirk/amctrl.c \
   $(SRC)/ext/libkirk/SHA1.c \
@@ -185,7 +206,10 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Common/ColorConv.cpp \
   $(SRC)/Common/KeyMap.cpp \
   $(SRC)/Common/LogManager.cpp \
-  $(SRC)/Common/MemArena.cpp \
+  $(SRC)/Common/MemArenaAndroid.cpp \
+  $(SRC)/Common/MemArenaDarwin.cpp \
+  $(SRC)/Common/MemArenaWin32.cpp \
+  $(SRC)/Common/MemArenaPosix.cpp \
   $(SRC)/Common/MemoryUtil.cpp \
   $(SRC)/Common/MsgHandler.cpp \
   $(SRC)/Common/FileUtil.cpp \
@@ -208,31 +232,37 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/GPU/Common/VertexDecoderCommon.cpp.arm \
   $(SRC)/GPU/Common/TextureCacheCommon.cpp.arm \
   $(SRC)/GPU/Common/TextureScalerCommon.cpp.arm \
+  $(SRC)/GPU/Common/ShaderCommon.cpp \
+  $(SRC)/GPU/Common/ShaderTranslation.cpp \
+  $(SRC)/GPU/Common/StencilCommon.cpp \
   $(SRC)/GPU/Common/SplineCommon.cpp.arm \
   $(SRC)/GPU/Common/DrawEngineCommon.cpp.arm \
   $(SRC)/GPU/Common/TransformCommon.cpp.arm \
   $(SRC)/GPU/Common/TextureDecoder.cpp \
   $(SRC)/GPU/Common/PostShader.cpp \
+  $(SRC)/GPU/Common/ShaderUniforms.cpp \
   $(SRC)/GPU/Debugger/Breakpoints.cpp \
+  $(SRC)/GPU/Debugger/Debugger.cpp \
+  $(SRC)/GPU/Debugger/Record.cpp \
   $(SRC)/GPU/Debugger/Stepping.cpp \
-  $(SRC)/GPU/GLES/Framebuffer.cpp \
-  $(SRC)/GPU/GLES/DepalettizeShader.cpp \
-  $(SRC)/GPU/GLES/GLES_GPU.cpp.arm \
-  $(SRC)/GPU/GLES/GLStateCache.cpp.arm \
-  $(SRC)/GPU/GLES/FBO.cpp \
-  $(SRC)/GPU/GLES/StencilBuffer.cpp.arm \
-  $(SRC)/GPU/GLES/TextureCache.cpp.arm \
-  $(SRC)/GPU/GLES/TransformPipeline.cpp.arm \
-  $(SRC)/GPU/GLES/StateMapping.cpp.arm \
-  $(SRC)/GPU/GLES/ShaderManager.cpp.arm \
-  $(SRC)/GPU/GLES/VertexShaderGenerator.cpp.arm \
-  $(SRC)/GPU/GLES/FragmentShaderGenerator.cpp.arm \
-  $(SRC)/GPU/GLES/FragmentTestCache.cpp.arm \
-  $(SRC)/GPU/GLES/TextureScaler.cpp \
+  $(SRC)/GPU/GLES/FramebufferManagerGLES.cpp \
+  $(SRC)/GPU/GLES/DepalettizeShaderGLES.cpp \
+  $(SRC)/GPU/GLES/DepthBufferGLES.cpp.arm \
+  $(SRC)/GPU/GLES/GPU_GLES.cpp.arm \
+  $(SRC)/GPU/GLES/StencilBufferGLES.cpp.arm \
+  $(SRC)/GPU/GLES/TextureCacheGLES.cpp.arm \
+  $(SRC)/GPU/GLES/DrawEngineGLES.cpp.arm \
+  $(SRC)/GPU/GLES/StateMappingGLES.cpp.arm \
+  $(SRC)/GPU/GLES/ShaderManagerGLES.cpp.arm \
+  $(SRC)/GPU/GLES/VertexShaderGeneratorGLES.cpp.arm \
+  $(SRC)/GPU/GLES/FragmentShaderGeneratorGLES.cpp.arm \
+  $(SRC)/GPU/GLES/FragmentTestCacheGLES.cpp.arm \
+  $(SRC)/GPU/GLES/TextureScalerGLES.cpp \
   $(SRC)/GPU/Null/NullGpu.cpp \
   $(SRC)/GPU/Software/Clipper.cpp \
   $(SRC)/GPU/Software/Lighting.cpp \
   $(SRC)/GPU/Software/Rasterizer.cpp.arm \
+  $(SRC)/GPU/Software/Sampler.cpp \
   $(SRC)/GPU/Software/SoftGpu.cpp \
   $(SRC)/GPU/Software/TransformUnit.cpp \
   $(SRC)/Core/ELF/ElfReader.cpp \
@@ -265,11 +295,28 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/MemMap.cpp \
   $(SRC)/Core/MemMapFunctions.cpp \
   $(SRC)/Core/Reporting.cpp \
+  $(SRC)/Core/Replay.cpp \
   $(SRC)/Core/SaveState.cpp \
   $(SRC)/Core/Screenshot.cpp \
   $(SRC)/Core/System.cpp \
+  $(SRC)/Core/TextureReplacer.cpp \
+  $(SRC)/Core/WebServer.cpp \
   $(SRC)/Core/Debugger/Breakpoints.cpp \
+  $(SRC)/Core/Debugger/DisassemblyManager.cpp \
   $(SRC)/Core/Debugger/SymbolMap.cpp \
+  $(SRC)/Core/Debugger/WebSocket.cpp \
+  $(SRC)/Core/Debugger/WebSocket/BreakpointSubscriber.cpp \
+  $(SRC)/Core/Debugger/WebSocket/CPUCoreSubscriber.cpp \
+  $(SRC)/Core/Debugger/WebSocket/DisasmSubscriber.cpp \
+  $(SRC)/Core/Debugger/WebSocket/GameBroadcaster.cpp \
+  $(SRC)/Core/Debugger/WebSocket/GameSubscriber.cpp \
+  $(SRC)/Core/Debugger/WebSocket/GPUBufferSubscriber.cpp \
+  $(SRC)/Core/Debugger/WebSocket/GPURecordSubscriber.cpp \
+  $(SRC)/Core/Debugger/WebSocket/HLESubscriber.cpp \
+  $(SRC)/Core/Debugger/WebSocket/LogBroadcaster.cpp \
+  $(SRC)/Core/Debugger/WebSocket/SteppingBroadcaster.cpp \
+  $(SRC)/Core/Debugger/WebSocket/SteppingSubscriber.cpp \
+  $(SRC)/Core/Debugger/WebSocket/WebSocketUtils.cpp \
   $(SRC)/Core/Dialog/PSPDialog.cpp \
   $(SRC)/Core/Dialog/PSPGamedataInstallDialog.cpp \
   $(SRC)/Core/Dialog/PSPMsgDialog.cpp \
@@ -284,6 +331,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/HLE/HLETables.cpp \
   $(SRC)/Core/HLE/ReplaceTables.cpp \
   $(SRC)/Core/HLE/HLE.cpp \
+  $(SRC)/Core/HLE/KUBridge.cpp \
   $(SRC)/Core/HLE/sceAdler.cpp \
   $(SRC)/Core/HLE/sceAtrac.cpp \
   $(SRC)/Core/HLE/__sceAudio.cpp.arm \
@@ -340,6 +388,8 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/HLE/sceSsl.cpp \
   $(SRC)/Core/HLE/sceUmd.cpp \
   $(SRC)/Core/HLE/sceUsb.cpp \
+  $(SRC)/Core/HLE/sceUsbAcc.cpp \
+  $(SRC)/Core/HLE/sceUsbCam.cpp \
   $(SRC)/Core/HLE/sceUsbGps.cpp \
   $(SRC)/Core/HLE/sceUtility.cpp \
   $(SRC)/Core/HLE/sceVaudio.cpp \
@@ -347,6 +397,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/HLE/sceGameUpdate.cpp \
   $(SRC)/Core/HLE/sceNp.cpp \
   $(SRC)/Core/HLE/scePauth.cpp \
+  $(SRC)/Core/FileSystems/BlobFileSystem.cpp \
   $(SRC)/Core/FileSystems/BlockDevices.cpp \
   $(SRC)/Core/FileSystems/ISOFileSystem.cpp \
   $(SRC)/Core/FileSystems/FileSystem.cpp \
@@ -366,26 +417,86 @@ EXEC_AND_LIB_FILES := \
 
 LOCAL_MODULE := ppsspp_core
 LOCAL_SRC_FILES := $(EXEC_AND_LIB_FILES)
-
 include $(BUILD_STATIC_LIBRARY)
 
 include $(CLEAR_VARS)
 include $(LOCAL_PATH)/Locals.mk
-LOCAL_STATIC_LIBRARIES += ppsspp_core
+LOCAL_C_INCLUDES := $(LOCAL_PATH)/$(SRC)/ext/armips $(LOCAL_C_INCLUDES)
+
+LIBARMIPS_FILES := \
+  $(SRC)/ext/armips/Archs/ARM/Arm.cpp \
+  $(SRC)/ext/armips/Archs/ARM/ArmOpcodes.cpp \
+  $(SRC)/ext/armips/Archs/ARM/ArmParser.cpp \
+  $(SRC)/ext/armips/Archs/ARM/ArmElfRelocator.cpp \
+  $(SRC)/ext/armips/Archs/ARM/ArmExpressionFunctions.cpp \
+  $(SRC)/ext/armips/Archs/ARM/CArmInstruction.cpp \
+  $(SRC)/ext/armips/Archs/ARM/CThumbInstruction.cpp \
+  $(SRC)/ext/armips/Archs/ARM/Pool.cpp \
+  $(SRC)/ext/armips/Archs/ARM/ThumbOpcodes.cpp \
+  $(SRC)/ext/armips/Archs/MIPS/CMipsInstruction.cpp \
+  $(SRC)/ext/armips/Archs/MIPS/Mips.cpp \
+  $(SRC)/ext/armips/Archs/MIPS/MipsElfFile.cpp \
+  $(SRC)/ext/armips/Archs/MIPS/MipsElfRelocator.cpp \
+  $(SRC)/ext/armips/Archs/MIPS/MipsExpressionFunctions.cpp \
+  $(SRC)/ext/armips/Archs/MIPS/MipsMacros.cpp \
+  $(SRC)/ext/armips/Archs/MIPS/MipsOpcodes.cpp \
+  $(SRC)/ext/armips/Archs/MIPS/MipsParser.cpp \
+  $(SRC)/ext/armips/Archs/MIPS/PsxRelocator.cpp \
+  $(SRC)/ext/armips/Archs/Architecture.cpp \
+  $(SRC)/ext/armips/Commands/CAssemblerCommand.cpp \
+  $(SRC)/ext/armips/Commands/CAssemblerLabel.cpp \
+  $(SRC)/ext/armips/Commands/CDirectiveArea.cpp \
+  $(SRC)/ext/armips/Commands/CDirectiveConditional.cpp \
+  $(SRC)/ext/armips/Commands/CDirectiveData.cpp \
+  $(SRC)/ext/armips/Commands/CDirectiveFile.cpp \
+  $(SRC)/ext/armips/Commands/CDirectiveMessage.cpp \
+  $(SRC)/ext/armips/Commands/CommandSequence.cpp \
+  $(SRC)/ext/armips/Core/ELF/ElfFile.cpp \
+  $(SRC)/ext/armips/Core/ELF/ElfRelocator.cpp \
+  $(SRC)/ext/armips/Core/Assembler.cpp \
+  $(SRC)/ext/armips/Core/Common.cpp \
+  $(SRC)/ext/armips/Core/Expression.cpp \
+  $(SRC)/ext/armips/Core/ExpressionFunctions.cpp \
+  $(SRC)/ext/armips/Core/FileManager.cpp \
+  $(SRC)/ext/armips/Core/Misc.cpp \
+  $(SRC)/ext/armips/Core/SymbolData.cpp \
+  $(SRC)/ext/armips/Core/SymbolTable.cpp \
+  $(SRC)/ext/armips/Parser/DirectivesParser.cpp \
+  $(SRC)/ext/armips/Parser/ExpressionParser.cpp \
+  $(SRC)/ext/armips/Parser/Parser.cpp \
+  $(SRC)/ext/armips/Parser/Tokenizer.cpp \
+  $(SRC)/ext/armips/Util/ByteArray.cpp \
+  $(SRC)/ext/armips/Util/CRC.cpp \
+  $(SRC)/ext/armips/Util/EncodingTable.cpp \
+  $(SRC)/ext/armips/Util/FileClasses.cpp \
+  $(SRC)/ext/armips/Util/Util.cpp
+
+LOCAL_MODULE := libarmips
+LOCAL_SRC_FILES := $(LIBARMIPS_FILES)
+include $(BUILD_STATIC_LIBRARY)
+
+include $(CLEAR_VARS)
+include $(LOCAL_PATH)/Locals.mk
+LOCAL_STATIC_LIBRARIES += ppsspp_core libarmips
 
 # These are the files just for ppsspp_jni
 LOCAL_MODULE := ppsspp_jni
 LOCAL_SRC_FILES := \
   $(SRC)/android/jni/app-android.cpp \
+  $(SRC)/android/jni/AndroidEGLContext.cpp \
+  $(SRC)/android/jni/AndroidJavaGLContext.cpp \
+  $(SRC)/android/jni/AndroidVulkanContext.cpp \
   $(SRC)/android/jni/native_audio.cpp \
   $(SRC)/android/jni/native-audio-so.cpp \
   $(SRC)/UI/BackgroundAudio.cpp \
+  $(SRC)/UI/DiscordIntegration.cpp \
   $(SRC)/UI/DevScreens.cpp \
   $(SRC)/UI/DisplayLayoutEditor.cpp \
   $(SRC)/UI/DisplayLayoutScreen.cpp \
   $(SRC)/UI/EmuScreen.cpp \
   $(SRC)/UI/MainScreen.cpp \
   $(SRC)/UI/MiscScreens.cpp \
+  $(SRC)/UI/RemoteISOScreen.cpp \
   $(SRC)/UI/ReportScreen.cpp \
   $(SRC)/UI/PauseScreen.cpp \
   $(SRC)/UI/SavedataScreen.cpp \
@@ -395,14 +506,17 @@ LOCAL_SRC_FILES := \
   $(SRC)/UI/GameScreen.cpp \
   $(SRC)/UI/ControlMappingScreen.cpp \
   $(SRC)/UI/GameSettingsScreen.cpp \
+  $(SRC)/UI/GPUDriverTestScreen.cpp \
   $(SRC)/UI/TiltAnalogSettingsScreen.cpp \
   $(SRC)/UI/TiltEventProcessor.cpp \
   $(SRC)/UI/TouchControlLayoutScreen.cpp \
   $(SRC)/UI/TouchControlVisibilityScreen.cpp \
   $(SRC)/UI/CwCheatScreen.cpp \
   $(SRC)/UI/InstallZipScreen.cpp \
+  $(SRC)/UI/OnScreenDisplay.cpp \
   $(SRC)/UI/ProfilerDraw.cpp \
   $(SRC)/UI/NativeApp.cpp \
+  $(SRC)/UI/TextureUtil.cpp \
   $(SRC)/UI/ComboKeyMappingScreen.cpp
 
 ifneq ($(SKIPAPP),1)
@@ -413,7 +527,7 @@ endif
 ifeq ($(HEADLESS),1)
   include $(CLEAR_VARS)
   include $(LOCAL_PATH)/Locals.mk
-  LOCAL_STATIC_LIBRARIES += ppsspp_core
+  LOCAL_STATIC_LIBRARIES += ppsspp_core libarmips
 
   # Android 5.0 requires PIE for executables.  Only supported on 4.1+, but this is testing anyway.
   LOCAL_CFLAGS += -fPIE
@@ -422,6 +536,7 @@ ifeq ($(HEADLESS),1)
   LOCAL_MODULE := ppsspp_headless
   LOCAL_SRC_FILES := \
     $(SRC)/headless/Headless.cpp \
+    $(SRC)/headless/StubHost.cpp \
     $(SRC)/headless/Compare.cpp
 
   include $(BUILD_EXECUTABLE)
@@ -430,57 +545,11 @@ endif
 ifeq ($(UNITTEST),1)
   include $(CLEAR_VARS)
   include $(LOCAL_PATH)/Locals.mk
-  LOCAL_STATIC_LIBRARIES += ppsspp_core
+  LOCAL_STATIC_LIBRARIES += ppsspp_core libarmips
 
   # Android 5.0 requires PIE for executables.  Only supported on 4.1+, but this is testing anyway.
   LOCAL_CFLAGS += -fPIE
   LOCAL_LDFLAGS += -fPIE -pie
-
-  LOCAL_C_INCLUDES := $(LOCAL_PATH)/$(SRC)/ext/armips $(LOCAL_C_INCLUDES)
-
-  LIBARMIPS_FILES := \
-	$(SRC)/ext/armips/Archs/ARM/Arm.cpp \
-	$(SRC)/ext/armips/Archs/ARM/ArmOpcodes.cpp \
-	$(SRC)/ext/armips/Archs/ARM/ArmParser.cpp \
-	$(SRC)/ext/armips/Archs/ARM/ArmRelocator.cpp \
-	$(SRC)/ext/armips/Archs/ARM/CArmInstruction.cpp \
-	$(SRC)/ext/armips/Archs/ARM/CThumbInstruction.cpp \
-	$(SRC)/ext/armips/Archs/ARM/Pool.cpp \
-	$(SRC)/ext/armips/Archs/ARM/ThumbOpcodes.cpp \
-	$(SRC)/ext/armips/Archs/MIPS/CMipsInstruction.cpp \
-	$(SRC)/ext/armips/Archs/MIPS/Mips.cpp \
-	$(SRC)/ext/armips/Archs/MIPS/MipsElfFile.cpp \
-	$(SRC)/ext/armips/Archs/MIPS/MipsMacros.cpp \
-	$(SRC)/ext/armips/Archs/MIPS/MipsOpcodes.cpp \
-	$(SRC)/ext/armips/Archs/MIPS/MipsParser.cpp \
-	$(SRC)/ext/armips/Archs/MIPS/PsxRelocator.cpp \
-	$(SRC)/ext/armips/Archs/Architecture.cpp \
-	$(SRC)/ext/armips/Commands/CAssemblerCommand.cpp \
-	$(SRC)/ext/armips/Commands/CAssemblerLabel.cpp \
-	$(SRC)/ext/armips/Commands/CDirectiveArea.cpp \
-	$(SRC)/ext/armips/Commands/CDirectiveConditional.cpp \
-	$(SRC)/ext/armips/Commands/CDirectiveData.cpp \
-	$(SRC)/ext/armips/Commands/CDirectiveFile.cpp \
-	$(SRC)/ext/armips/Commands/CDirectiveMessage.cpp \
-	$(SRC)/ext/armips/Commands/CommandSequence.cpp \
-	$(SRC)/ext/armips/Core/ELF/ElfFile.cpp \
-	$(SRC)/ext/armips/Core/ELF/ElfRelocator.cpp \
-	$(SRC)/ext/armips/Core/Assembler.cpp \
-	$(SRC)/ext/armips/Core/Common.cpp \
-	$(SRC)/ext/armips/Core/Expression.cpp \
-	$(SRC)/ext/armips/Core/FileManager.cpp \
-	$(SRC)/ext/armips/Core/Misc.cpp \
-	$(SRC)/ext/armips/Core/SymbolData.cpp \
-	$(SRC)/ext/armips/Core/SymbolTable.cpp \
-	$(SRC)/ext/armips/Parser/DirectivesParser.cpp \
-	$(SRC)/ext/armips/Parser/ExpressionParser.cpp \
-	$(SRC)/ext/armips/Parser/Parser.cpp \
-	$(SRC)/ext/armips/Parser/Tokenizer.cpp \
-	$(SRC)/ext/armips/Util/ByteArray.cpp \
-	$(SRC)/ext/armips/Util/CRC.cpp \
-	$(SRC)/ext/armips/Util/EncodingTable.cpp \
-	$(SRC)/ext/armips/Util/FileClasses.cpp \
-	$(SRC)/ext/armips/Util/Util.cpp
 
   ifeq ($(findstring arm64-v8a,$(TARGET_ARCH_ABI)),arm64-v8a)
     TESTARMEMITTER_FILE = $(SRC)/unittest/TestArm64Emitter.cpp
@@ -500,8 +569,6 @@ ifeq ($(UNITTEST),1)
 
   LOCAL_MODULE := ppsspp_unittest
   LOCAL_SRC_FILES := \
-    $(LIBARMIPS_FILES) \
-    $(SRC)/Core/MIPS/MIPSAsm.cpp \
     $(SRC)/unittest/JitHarness.cpp \
     $(SRC)/unittest/TestVertexJit.cpp \
     $(TESTARMEMITTER_FILE) \
@@ -512,7 +579,7 @@ endif
 
 $(call import-module,libzip)
 $(call import-module,native)
-$(call import-module,glslang)
+$(call import-module,glslang-build)
 
 ifeq ($(ANDROID_NDK_PROFILER),1)
   $(call import-module,android-ndk-profiler)

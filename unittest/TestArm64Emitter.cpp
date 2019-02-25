@@ -10,7 +10,7 @@
 
 static bool CheckLast(Arm64Gen::ARM64XEmitter &emit, const char *comp) {
 	u32 instr;
-	memcpy(&instr, emit.GetCodePtr() - 4, 4);
+	memcpy(&instr, emit.GetCodePointer() - 4, 4);
 	char disasm[512];
 	Arm64Dis(0, instr, disasm, sizeof(disasm), true);
 	EXPECT_EQ_STR(std::string(disasm), std::string(comp));
@@ -40,6 +40,11 @@ bool TestArm64Emitter() {
 	u32 code[512];
 	ARM64XEmitter emitter((u8 *)code);
 	ARM64FloatEmitter fp(&emitter);
+
+	emitter.MOVfromSP(X3);
+	RET(CheckLast(emitter, "910003e3 mov x3, sp"));
+	emitter.MOVtoSP(X11);
+	RET(CheckLast(emitter, "9100017f mov sp, x11"));
 
 	fp.EOR(Q0, Q1, Q2);
 	RET(CheckLast(emitter, "6e221c20 eor q0, q1, q2"));

@@ -15,6 +15,9 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "ppsspp_config.h"
+#if PPSSPP_ARCH(MIPS)
+
 #include "base/logging.h"
 #include "profiler/profiler.h"
 #include "Common/ChunkFile.h"
@@ -63,19 +66,7 @@ void MipsJit::DoState(PointerWrap &p)
 	}
 }
 
-// This is here so the savestate matches between jit and non-jit.
-void MipsJit::DoDummyState(PointerWrap &p)
-{
-	auto s = p.Section("Jit", 1, 2);
-	if (!s)
-		return;
-
-	bool dummy = false;
-	p.Do(dummy);
-	if (s >= 2) {
-		dummy = true;
-		p.Do(dummy);
-	}
+void MipsJit::UpdateFCR31() {
 }
 
 void MipsJit::FlushAll()
@@ -94,11 +85,6 @@ void MipsJit::ClearCache()
 	blocks.Clear();
 	ClearCodeSpace();
 	//GenerateFixedCode();
-}
-
-void MipsJit::InvalidateCache()
-{
-	blocks.Clear();
 }
 
 void MipsJit::InvalidateCacheAt(u32 em_address, int length)
@@ -127,7 +113,7 @@ void MipsJit::CompileDelaySlot(int flags)
 
 	js.inDelaySlot = true;
 	MIPSOpcode op = Memory::Read_Opcode_JIT(js.compilerPC + 4);
-	MIPSCompileOp(op);
+	MIPSCompileOp(op, this);
 	js.inDelaySlot = false;
 
 	if (flags & DELAYSLOT_FLUSH)
@@ -188,7 +174,7 @@ const u8 *MipsJit::DoJit(u32 em_address, JitBlock *b)
 		MIPSOpcode inst = Memory::Read_Opcode_JIT(js.compilerPC);
 		js.downcountAmount += MIPSGetInstructionCycleEstimate(inst);
 
-		MIPSCompileOp(inst);
+		MIPSCompileOp(inst, this);
 
 		js.compilerPC += 4;
 		js.numInstructions++;
@@ -358,3 +344,5 @@ void MipsJit::WriteSyscallExit()
 // mov dreg, [eax+offreg]
 	
 }
+
+#endif // PPSSPP_ARCH(MIPS)

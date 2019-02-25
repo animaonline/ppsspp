@@ -7,16 +7,15 @@
 // Works very similarly to Android, there's a Measure pass and a Layout pass which you don't
 // really need to care about if you just use the standard containers and widgets.
 
-#include <string>
-#include <vector>
-#include <map>
 #include <cmath>
 #include <cstdio>
+#include <functional>
+#include <map>
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "base/logging.h"
-#include "base/functional.h"
-#include "base/mutex.h"
 #include "base/basictypes.h"
 #include "gfx/texture_atlas.h"
 #include "math/lin/matrix4x4.h"
@@ -25,20 +24,18 @@
 
 #undef small
 
-#ifdef __SYMBIAN32__
-#define unique_ptr auto_ptr
-#endif
-
 struct KeyInput;
 struct TouchInput;
 struct AxisInput;
-struct InputState;
 
 class DrawBuffer;
 class Texture;
 class UIContext;
 
-class Thin3DTexture;
+namespace Draw {
+	class DrawContext;
+	class Texture;
+}
 
 
 // I don't generally like namespaces but I think we do need one for UI, so many potentially-clashing names.
@@ -121,8 +118,10 @@ struct Theme {
 	Style itemHighlightedStyle;
 
 	Style headerStyle;
+	Style infoStyle;
 
 	Style popupTitle;
+	Style popupStyle;
 };
 
 // The four cardinal directions should be enough, plus Prev/Next in "element order".
@@ -226,9 +225,6 @@ struct MeasureSpec {
 	float size;
 };
 
-class View;
-
-
 // Should cover all bases.
 struct EventParams {
 	View *v;
@@ -255,7 +251,7 @@ public:
 	// This is suggested for use in most cases. Autobinds, allowing for neat syntax.
 	template<class T>
 	T *Handle(T *thiz, EventReturn (T::* theCallback)(EventParams &e)) {
-		Add(std::bind(theCallback, thiz, placeholder::_1));
+		Add(std::bind(theCallback, thiz, std::placeholders::_1));
 		return thiz;
 	}
 
@@ -273,10 +269,36 @@ struct Margins {
 	Margins(int8_t horiz, int8_t vert) : top(vert), bottom(vert), left(horiz), right(horiz) {}
 	Margins(int8_t l, int8_t t, int8_t r, int8_t b) : top(t), bottom(b), left(l), right(r) {}
 
+	int horiz() const {
+		return left + right;
+	}
+	int vert() const {
+		return top + bottom;
+	}
+
 	int8_t top;
 	int8_t bottom;
 	int8_t left;
 	int8_t right;
+};
+
+struct Padding {
+	Padding() : top(0), bottom(0), left(0), right(0) {}
+	explicit Padding(float all) : top(all), bottom(all), left(all), right(all) {}
+	Padding(float horiz, float vert) : top(vert), bottom(vert), left(horiz), right(horiz) {}
+	Padding(float l, float t, float r, float b) : top(t), bottom(b), left(l), right(r) {}
+
+	float horiz() const {
+		return left + right;
+	}
+	float vert() const {
+		return top + bottom;
+	}
+
+	float top;
+	float bottom;
+	float left;
+	float right;
 };
 
 enum LayoutParamsType {
@@ -325,6 +347,9 @@ private:
 
 View *GetFocusedView();
 
+class Tween;
+class CallbackColorTween;
+
 class View {
 public:
 	View(LayoutParams *layoutParams = 0) : layoutParams_(layoutParams), visibility_(V_VISIBLE), measuredWidth_(0), measuredHeight_(0), enabledPtr_(0), enabled_(true), enabledMeansDisabled_(false) {
@@ -339,7 +364,10 @@ public:
 	virtual bool Key(const KeyInput &input) { return false; }
 	virtual void Touch(const TouchInput &input) {}
 	virtual void Axis(const AxisInput &input) {}
-	virtual void Update(const InputState &input_state) {}
+	virtual void Update();
+
+	virtual void DeviceLost() {}
+	virtual void DeviceRestored(Draw::DrawContext *draw) {}
 
 	// If this view covers these coordinates, it should add itself and its children to the list.
 	virtual void Query(float x, float y, std::vector<View *> &list);
@@ -362,6 +390,7 @@ public:
 
 	// Override this for easy standard behaviour. No need to override Measure.
 	virtual void GetContentDimensions(const UIContext &dc, float &w, float &h) const;
+	virtual void GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const;
 
 	// Called when the layout is done.
 	void SetBounds(Bounds bounds) { bounds_ = bounds; }
@@ -399,6 +428,12 @@ public:
 
 	Point GetFocusPosition(FocusDirection dir);
 
+	template <class T>
+	T *AddTween(T *t) {
+		tweens_.push_back(t);
+		return t;
+	}
+
 protected:
 	// Inputs to layout
 	std::unique_ptr<LayoutParams> layoutParams_;
@@ -413,7 +448,7 @@ protected:
 	// Outputs of layout. X/Y are absolute screen coordinates, hierarchy is "gone" here.
 	Bounds bounds_;
 
-	std::unique_ptr<Matrix4x4> transform_;
+	std::vector<Tween *> tweens_;
 
 private:
 	bool *enabledPtr_;
@@ -432,15 +467,13 @@ public:
 	bool Key(const KeyInput &input) override { return false; }
 	void Touch(const TouchInput &input) override {}
 	bool CanBeFocused() const override { return false; }
-	void Update(const InputState &input_state) override {}
 };
 
 
 // All these light up their background when touched, or have focus.
 class Clickable : public View {
 public:
-	Clickable(LayoutParams *layoutParams)
-		: View(layoutParams), downCountDown_(0), dragging_(false), down_(false){}
+	Clickable(LayoutParams *layoutParams);
 
 	bool Key(const KeyInput &input) override;
 	void Touch(const TouchInput &input) override;
@@ -454,10 +487,13 @@ protected:
 	// the event.
 	// Use it for checking/unchecking checkboxes, etc.
 	virtual void Click();
+	void DrawBG(UIContext &dc, const Style &style);
 
-	int downCountDown_;
-	bool dragging_;
-	bool down_;
+	CallbackColorTween *bgColor_ = nullptr;
+	float bgColorLast_ = 0.0f;
+	int downCountDown_ = 0;
+	bool dragging_ = false;
+	bool down_ = false;
 };
 
 class Button : public Clickable {
@@ -472,25 +508,32 @@ public:
 	void Draw(UIContext &dc) override;
 	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
 	const std::string &GetText() const { return text_; }
+	void SetPadding(int w, int h) {
+		paddingW_ = w;
+		paddingH_ = h;
+	}
 
 private:
 	Style style_;
 	std::string text_;
 	ImageID imageID_;
+	int paddingW_ = 16;
+	int paddingH_ = 8;
 };
 
 class Slider : public Clickable {
 public:
 	Slider(int *value, int minValue, int maxValue, LayoutParams *layoutParams = 0)
-		: Clickable(layoutParams), value_(value), showPercent_(false), minValue_(minValue), maxValue_(maxValue), paddingLeft_(5), paddingRight_(70), step_(1) {}
+		: Clickable(layoutParams), value_(value), showPercent_(false), minValue_(minValue), maxValue_(maxValue), paddingLeft_(5), paddingRight_(70), step_(1), repeat_(-1) {}
 
 	Slider(int *value, int minValue, int maxValue, int step = 1, LayoutParams *layoutParams = 0)
-		: Clickable(layoutParams), value_(value), showPercent_(false), minValue_(minValue), maxValue_(maxValue), paddingLeft_(5), paddingRight_(70) {
+		: Clickable(layoutParams), value_(value), showPercent_(false), minValue_(minValue), maxValue_(maxValue), paddingLeft_(5), paddingRight_(70), repeat_(-1) {
 		step_ = step <= 0 ? 1 : step;
 	}
 	void Draw(UIContext &dc) override;
 	bool Key(const KeyInput &input) override;
 	void Touch(const TouchInput &input) override;
+	void Update() override;
 	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
 	void SetShowPercent(bool s) { showPercent_ = s; }
 
@@ -500,6 +543,8 @@ public:
 	Event OnChange;
 
 private:
+	bool ApplyKey(int keyCode);
+
 	int *value_;
 	bool showPercent_;
 	int minValue_;
@@ -507,15 +552,18 @@ private:
 	float paddingLeft_;
 	float paddingRight_;
 	int step_;
+	int repeat_;
+	int repeatCode_;
 };
 
 class SliderFloat : public Clickable {
 public:
 	SliderFloat(float *value, float minValue, float maxValue, LayoutParams *layoutParams = 0)
-		: Clickable(layoutParams), value_(value), minValue_(minValue), maxValue_(maxValue), paddingLeft_(5), paddingRight_(70) {}
+		: Clickable(layoutParams), value_(value), minValue_(minValue), maxValue_(maxValue), paddingLeft_(5), paddingRight_(70), repeat_(-1) {}
 	void Draw(UIContext &dc) override;
 	bool Key(const KeyInput &input) override;
 	void Touch(const TouchInput &input) override;
+	void Update() override;
 	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
 
 	// OK to call this from the outside after having modified *value_
@@ -524,11 +572,15 @@ public:
 	Event OnChange;
 
 private:
+	bool ApplyKey(int keyCode);
+
 	float *value_;
 	float minValue_;
 	float maxValue_;
 	float paddingLeft_;
 	float paddingRight_;
+	int repeat_;
+	int repeatCode_;
 };
 
 // Basic button that modifies a bitfield based on the pressed status. Supports multitouch.
@@ -574,15 +626,15 @@ public:
 // Use to trigger something or open a submenu screen.
 class Choice : public ClickableItem {
 public:
-	Choice(const std::string &text, LayoutParams *layoutParams = 0)
-		: ClickableItem(layoutParams), text_(text), smallText_(), atlasImage_(-1), iconImage_(-1), centered_(false), highlighted_(false), selected_(false) {}
-	Choice(const std::string &text, const std::string &smallText, bool selected = false, LayoutParams *layoutParams = 0)
+	Choice(const std::string &text, LayoutParams *layoutParams = nullptr)
+		: Choice(text, std::string(), false, layoutParams) {}
+	Choice(const std::string &text, const std::string &smallText, bool selected = false, LayoutParams *layoutParams = nullptr)
 		: ClickableItem(layoutParams), text_(text), smallText_(smallText), atlasImage_(-1), iconImage_(-1), centered_(false), highlighted_(false), selected_(selected) {}
-	Choice(ImageID image, LayoutParams *layoutParams = 0)
+	Choice(ImageID image, LayoutParams *layoutParams = nullptr)
 		: ClickableItem(layoutParams), atlasImage_(image), iconImage_(-1), centered_(false), highlighted_(false), selected_(false) {}
 
 	virtual void HighlightChanged(bool highlighted);
-	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
+	void GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const override;
 	void Draw(UIContext &dc) override;
 	virtual void SetCentered(bool c) {
 		centered_ = c;
@@ -594,12 +646,13 @@ public:
 protected:
 	// hackery
 	virtual bool IsSticky() const { return false; }
+	virtual float CalculateTextScale(const UIContext &dc, float availWidth) const;
 
-	int height_;
 	std::string text_;
 	std::string smallText_;
 	ImageID atlasImage_;
 	ImageID iconImage_;  // Only applies for text, non-centered
+	Padding textPadding_;
 	bool centered_;
 	bool highlighted_;
 
@@ -630,8 +683,7 @@ protected:
 
 class InfoItem : public Item {
 public:
-	InfoItem(const std::string &text, const std::string &rightText, LayoutParams *layoutParams = 0)
-		: Item(layoutParams), text_(text), rightText_(rightText) {}
+	InfoItem(const std::string &text, const std::string &rightText, LayoutParams *layoutParams = nullptr);
 
 	void Draw(UIContext &dc) override;
 
@@ -649,6 +701,9 @@ public:
 	}
 
 private:
+	CallbackColorTween *bgColor_ = nullptr;
+	CallbackColorTween *fgColor_ = nullptr;
+
 	std::string text_;
 	std::string rightText_;
 };
@@ -657,6 +712,7 @@ class ItemHeader : public Item {
 public:
 	ItemHeader(const std::string &text, LayoutParams *layoutParams = 0);
 	void Draw(UIContext &dc) override;
+	void GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const override;
 
 private:
 	std::string text_;
@@ -682,14 +738,32 @@ public:
 	}
 
 	void Draw(UIContext &dc) override;
+	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
 
 	EventReturn OnClicked(EventParams &e);
 	//allow external agents to toggle the checkbox
-	void Toggle();
+	virtual void Toggle();
+	virtual bool Toggled() const;
 private:
+	float CalculateTextScale(const UIContext &dc, float availWidth) const;
+
 	bool *toggle_;
 	std::string text_;
 	std::string smallText_;
+};
+
+class BitCheckBox : public CheckBox {
+public:
+	BitCheckBox(uint32_t *bitfield, uint32_t bit, const std::string &text, const std::string &smallText = "", LayoutParams *layoutParams = nullptr)
+		: CheckBox(nullptr, text, smallText, layoutParams), bitfield_(bitfield), bit_(bit) {
+	}
+
+	void Toggle() override;
+	bool Toggled() const override;
+
+private:
+	uint32_t *bitfield_;
+	uint32_t bit_;
 };
 
 // These are for generic use.
@@ -716,13 +790,13 @@ public:
 	TextView(const std::string &text, int textAlign, bool small, LayoutParams *layoutParams = 0)
 		: InertView(layoutParams), text_(text), textAlign_(textAlign), textColor_(0xFFFFFFFF), small_(small), shadow_(false), focusable_(false), clip_(true) {}
 
-	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
+	void GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const override;
 	void Draw(UIContext &dc) override;
 
 	void SetText(const std::string &text) { text_ = text; }
 	const std::string &GetText() const { return text_; }
 	void SetSmall(bool small) { small_ = small; }
-	void SetTextColor(uint32_t color) { textColor_ = color; }
+	void SetTextColor(uint32_t color) { textColor_ = color; hasTextColor_ = true; }
 	void SetShadow(bool shadow) { shadow_ = shadow; }
 	void SetFocusable(bool focusable) { focusable_ = focusable; }
 	void SetClip(bool clip) { clip_ = clip; }
@@ -733,6 +807,7 @@ private:
 	std::string text_;
 	int textAlign_;
 	uint32_t textColor_;
+	bool hasTextColor_ = false;
 	bool small_;
 	bool shadow_;
 	bool focusable_;
@@ -742,9 +817,11 @@ private:
 class TextEdit : public View {
 public:
 	TextEdit(const std::string &text, const std::string &placeholderText, LayoutParams *layoutParams = 0);
-	void SetText(const std::string &text) { text_ = text; caret_ = (int)text_.size(); }
+	void SetText(const std::string &text) { text_ = text; scrollPos_ = 0; caret_ = (int)text_.size(); }
+	void SetTextColor(uint32_t color) { textColor_ = color; hasTextColor_ = true; }
 	const std::string &GetText() const { return text_; }
 	void SetMaxLen(size_t maxLen) { maxLen_ = maxLen; }
+	void SetTextAlign(int align) { align_ = align; }  // Only really useful for setting FLAG_DYNAMIC_ASCII
 
 	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
 	void Draw(UIContext &dc) override;
@@ -760,15 +837,20 @@ private:
 	std::string text_;
 	std::string undo_;
 	std::string placeholderText_;
+	uint32_t textColor_;
+	bool hasTextColor_ = false;
 	int caret_;
+	int scrollPos_ = 0;
 	size_t maxLen_;
-	bool ctrlDown_;  // TODO: Make some global mechanism for this.
+	bool ctrlDown_ = false;  // TODO: Make some global mechanism for this.
+	int align_ = 0;
 	// TODO: Selections
 };
 
 enum ImageSizeMode {
 	IS_DEFAULT,
 	IS_FIXED,
+	IS_KEEP_ASPECT,
 };
 
 class ImageView : public InertView {
@@ -786,19 +868,19 @@ private:
 
 // TextureView takes a texture that is assumed to be alive during the lifetime
 // of the view.
-class Thin3DTextureView : public InertView {
+class TextureView : public InertView {
 public:
-	Thin3DTextureView(Thin3DTexture *texture, ImageSizeMode sizeMode, LayoutParams *layoutParams = 0)
+	TextureView(Draw::Texture *texture, ImageSizeMode sizeMode, LayoutParams *layoutParams = 0)
 		: InertView(layoutParams), texture_(texture), color_(0xFFFFFFFF), sizeMode_(sizeMode) {}
 
 	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
 	void Draw(UIContext &dc) override;
 
-	void SetTexture(Thin3DTexture *texture) { texture_ = texture; }
+	void SetTexture(Draw::Texture *texture) { texture_ = texture; }
 	void SetColor(uint32_t color) { color_ = color; }
 
 private:
-	Thin3DTexture *texture_;
+	Draw::Texture *texture_;
 	uint32_t color_;
 	ImageSizeMode sizeMode_;
 };
@@ -824,6 +906,22 @@ public:
 
 private:
 	float progress_;
+};
+
+class Spinner : public InertView {
+public:
+	Spinner(const int *images, int numImages, LayoutParams *layoutParams = 0)
+		: InertView(layoutParams), images_(images), numImages_(numImages) {
+	}
+
+	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
+	void Draw(UIContext &dc) override;
+	void SetColor(uint32_t color) { color_ = color; }
+
+private:
+	const int *images_;
+	int numImages_;
+	uint32_t color_ = 0xFFFFFFFF;
 };
 
 void MeasureBySpec(Size sz, float contentWidth, MeasureSpec spec, float *measured);

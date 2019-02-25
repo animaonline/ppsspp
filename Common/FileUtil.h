@@ -25,7 +25,7 @@
 
 #include "Common.h"
 
-#ifdef _WIN32
+#ifdef _MSC_VER
 inline struct tm* localtime_r(const time_t *clock, struct tm *result) {
 	if (localtime_s(result, clock) == 0)
 		return result;
@@ -57,6 +57,9 @@ struct FileDetails {
 // Mostly to handle utf-8 filenames better on Windows.
 FILE *OpenCFile(const std::string &filename, const char *mode);
 bool OpenCPPFile(std::fstream & stream, const std::string &filename, std::ios::openmode mode);
+
+// Resolves symlinks and similar.
+std::string ResolvePath(const std::string &path);
 
 // Returns true if file filename exists
 bool Exists(const std::string &filename);
@@ -113,6 +116,9 @@ std::string GetCurrentDir();
 // Create directory and copy contents (does not overwrite existing files)
 void CopyDir(const std::string &source_path, const std::string &dest_path);
 
+// Opens ini file (cheats, texture replacements etc.)
+void openIniFile(const std::string fileName);
+
 // Set the current directory to given directory
 bool SetCurrentDir(const std::string &directory);
 
@@ -121,13 +127,16 @@ const std::string &GetExeDirectory();
 // simple wrapper for cstdlib file functions to
 // hopefully will make error checking easier
 // and make forgetting an fclose() harder
-class IOFile : NonCopyable {
+class IOFile {
 public:
 	IOFile();
 	IOFile(std::FILE* file);
 	IOFile(const std::string& filename, const char openmode[]);
-
 	~IOFile();
+
+	// Prevent copies.
+	IOFile(const IOFile &) = delete;
+	void operator=(const IOFile &) = delete;
 
 	bool Open(const std::string& filename, const char openmode[]);
 	bool Close();
@@ -186,10 +195,7 @@ public:
 	}
 
 private:
-	IOFile& operator=(const IOFile&) /*= delete*/;
-	IOFile(const IOFile&) /*= delete*/;
-
-	std::FILE* m_file;
+	std::FILE *m_file;
 	bool m_good;
 };
 

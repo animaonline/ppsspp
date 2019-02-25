@@ -1,4 +1,4 @@
-﻿// NOTE: Apologies for the quality of this code, this is really from pre-opensource Dolphin - that is, 2003.
+// NOTE: Apologies for the quality of this code, this is really from pre-opensource Dolphin - that is, 2003.
 
 #include "Windows/resource.h"
 #include "Core/MemMap.h"
@@ -10,12 +10,12 @@
 #include "Core/MIPS/MIPSAsm.h"
 #include "Core/MIPS/MIPSAnalyst.h"
 #include "Core/Config.h"
+#include "Common/StringUtils.h"
 #include "Windows/Debugger/CtrlDisAsmView.h"
 #include "Windows/Debugger/Debugger_MemoryDlg.h"
 #include "Windows/Debugger/DebuggerShared.h"
 #include "Windows/Debugger/BreakpointWindow.h"
 #include "Core/Debugger/SymbolMap.h"
-#include "Globals.h"
 #include "Windows/main.h"
 
 #include "Common/CommonWindows.h"
@@ -183,6 +183,7 @@ CtrlDisAsmView::~CtrlDisAsmView()
 {
 	DeleteObject(font);
 	DeleteObject(boldfont);
+	manager.clear();
 }
 
 COLORREF scaleColor(COLORREF color, float factor)
@@ -200,7 +201,6 @@ COLORREF scaleColor(COLORREF color, float factor)
 
 bool CtrlDisAsmView::getDisasmAddressText(u32 address, char* dest, bool abbreviateLabels, bool showData)
 {
-	auto memLock = Memory::Lock();
 	if (!PSP_IsInited())
 		return false;
 
@@ -228,7 +228,8 @@ bool CtrlDisAsmView::getDisasmAddressText(u32 address, char* dest, bool abbrevia
 		}
 	} else {
 		if (showData) {
-			sprintf(dest, "%08X %08X", address, Memory::Read_Instruction(address, true).encoding);
+			u32 encoding = Memory::IsValidAddress(address) ? Memory::Read_Instruction(address, true).encoding : 0;
+			sprintf(dest, "%08X %08X", address, encoding);
 		} else {
 			sprintf(dest, "%08X", address);
 		}
@@ -467,6 +468,7 @@ void CtrlDisAsmView::drawArguments(HDC hdc, const DisassemblyLineInfo &line, int
 
 void CtrlDisAsmView::onPaint(WPARAM wParam, LPARAM lParam)
 {
+	auto memLock = Memory::Lock();
 	if (!debugger->isAlive()) return;
 
 	PAINTSTRUCT ps;
@@ -550,7 +552,7 @@ void CtrlDisAsmView::onPaint(WPARAM wParam, LPARAM lParam)
 		
 		if (isInInterval(address,line.totalSize,debugger->getPC()))
 		{
-			TextOut(hdc,pixelPositions.opcodeStart-8,rowY1,L"■",1);
+			TextOut(hdc,pixelPositions.opcodeStart-8,rowY1,L"\x25A0",1);
 		}
 
 		// display whether the condition of a branch is met
@@ -834,22 +836,18 @@ void CtrlDisAsmView::redraw()
 void CtrlDisAsmView::toggleBreakpoint(bool toggleEnabled)
 {
 	bool enabled;
-	if (CBreakPoints::IsAddressBreakPoint(curAddress,&enabled))
-	{
-		if (!enabled)
-		{
+	if (CBreakPoints::IsAddressBreakPoint(curAddress, &enabled)) {
+		if (!enabled) {
 			// enable disabled breakpoints
-			CBreakPoints::ChangeBreakPoint(curAddress,true);
-		} else if (!toggleEnabled && CBreakPoints::GetBreakPointCondition(curAddress) != NULL)
-		{
+			CBreakPoints::ChangeBreakPoint(curAddress, true);
+		} else if (!toggleEnabled && CBreakPoints::GetBreakPointCondition(curAddress) != nullptr) {
 			// don't just delete a breakpoint with a custom condition
 			int ret = MessageBox(wnd,L"This breakpoint has a custom condition.\nDo you want to remove it?",L"Confirmation",MB_YESNO);
 			if (ret == IDYES)
 				CBreakPoints::RemoveBreakPoint(curAddress);
-		} else if (toggleEnabled)
-		{
+		} else if (toggleEnabled) {
 			// disable breakpoint
-			CBreakPoints::ChangeBreakPoint(curAddress,false);
+			CBreakPoints::ChangeBreakPoint(curAddress, false);
 		} else {
 			// otherwise just remove breakpoint
 			CBreakPoints::RemoveBreakPoint(curAddress);
@@ -974,7 +972,7 @@ void CtrlDisAsmView::onMouseUp(WPARAM wParam, LPARAM lParam, int button)
 				{
 					char name[256];
 					std::string newname;
-					strncpy_s(name, g_symbolMap->GetLabelString(funcBegin).c_str(),_TRUNCATE);
+					truncate_cpy(name, g_symbolMap->GetLabelString(funcBegin).c_str());
 					if (InputBox_GetString(MainWindow::GetHInstance(), MainWindow::GetHWND(), L"New function name", name, newname)) {
 						g_symbolMap->SetLabelName(newname.c_str(),funcBegin);
 						u32 funcSize = g_symbolMap->GetFunctionSize(curAddress);
@@ -1182,6 +1180,7 @@ void CtrlDisAsmView::calculatePixelPositions()
 
 void CtrlDisAsmView::search(bool continueSearch)
 {
+	auto memLock = Memory::Lock();
 	u32 searchAddress;
 
 	if (continueSearch == false || searchQuery[0] == 0)
@@ -1262,6 +1261,7 @@ void CtrlDisAsmView::search(bool continueSearch)
 
 std::string CtrlDisAsmView::disassembleRange(u32 start, u32 size)
 {
+	auto memLock = Memory::Lock();
 	std::string result;
 
 	// gather all branch targets without labels

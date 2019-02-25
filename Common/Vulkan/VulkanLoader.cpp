@@ -16,12 +16,13 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "Common/Vulkan/VulkanLoader.h"
+#include <vector>
 #include "base/logging.h"
+#include "base/basictypes.h"
 
 #ifndef _WIN32
 #include <dlfcn.h>
 #endif
-
 
 PFN_vkCreateInstance vkCreateInstance;
 PFN_vkDestroyInstance vkDestroyInstance;
@@ -113,16 +114,12 @@ PFN_vkDestroyCommandPool vkDestroyCommandPool;
 PFN_vkResetCommandPool vkResetCommandPool;
 PFN_vkAllocateCommandBuffers vkAllocateCommandBuffers;
 PFN_vkFreeCommandBuffers vkFreeCommandBuffers;
-PFN_vkBeginCommandBuffer vkBeginCommandBuffer;
-PFN_vkEndCommandBuffer vkEndCommandBuffer;
-PFN_vkResetCommandBuffer vkResetCommandBuffer;
+
+// Used frequently
 PFN_vkCmdBindPipeline vkCmdBindPipeline;
 PFN_vkCmdSetViewport vkCmdSetViewport;
 PFN_vkCmdSetScissor vkCmdSetScissor;
-PFN_vkCmdSetLineWidth vkCmdSetLineWidth;
-PFN_vkCmdSetDepthBias vkCmdSetDepthBias;
 PFN_vkCmdSetBlendConstants vkCmdSetBlendConstants;
-PFN_vkCmdSetDepthBounds vkCmdSetDepthBounds;
 PFN_vkCmdSetStencilCompareMask vkCmdSetStencilCompareMask;
 PFN_vkCmdSetStencilWriteMask vkCmdSetStencilWriteMask;
 PFN_vkCmdSetStencilReference vkCmdSetStencilReference;
@@ -131,40 +128,55 @@ PFN_vkCmdBindIndexBuffer vkCmdBindIndexBuffer;
 PFN_vkCmdBindVertexBuffers vkCmdBindVertexBuffers;
 PFN_vkCmdDraw vkCmdDraw;
 PFN_vkCmdDrawIndexed vkCmdDrawIndexed;
-PFN_vkCmdDrawIndirect vkCmdDrawIndirect;
-PFN_vkCmdDrawIndexedIndirect vkCmdDrawIndexedIndirect;
-PFN_vkCmdDispatch vkCmdDispatch;
-PFN_vkCmdDispatchIndirect vkCmdDispatchIndirect;
+PFN_vkCmdClearAttachments vkCmdClearAttachments;
+PFN_vkCmdPipelineBarrier vkCmdPipelineBarrier;
+PFN_vkCmdPushConstants vkCmdPushConstants;
+
+// Every frame to a few times per frame
+PFN_vkBeginCommandBuffer vkBeginCommandBuffer;
+PFN_vkEndCommandBuffer vkEndCommandBuffer;
+PFN_vkResetCommandBuffer vkResetCommandBuffer;
+PFN_vkCmdSetEvent vkCmdSetEvent;
+PFN_vkCmdResetEvent vkCmdResetEvent;
+PFN_vkCmdWaitEvents vkCmdWaitEvents;
+PFN_vkCmdBeginRenderPass vkCmdBeginRenderPass;
+PFN_vkCmdEndRenderPass vkCmdEndRenderPass;
 PFN_vkCmdCopyBuffer vkCmdCopyBuffer;
 PFN_vkCmdCopyImage vkCmdCopyImage;
 PFN_vkCmdBlitImage vkCmdBlitImage;
 PFN_vkCmdCopyBufferToImage vkCmdCopyBufferToImage;
 PFN_vkCmdCopyImageToBuffer vkCmdCopyImageToBuffer;
+
+PFN_vkCmdSetDepthBounds vkCmdSetDepthBounds;
+PFN_vkCmdSetLineWidth vkCmdSetLineWidth;
+PFN_vkCmdSetDepthBias vkCmdSetDepthBias;
+PFN_vkCmdDrawIndirect vkCmdDrawIndirect;
+PFN_vkCmdDrawIndexedIndirect vkCmdDrawIndexedIndirect;
+PFN_vkCmdDispatch vkCmdDispatch;
+PFN_vkCmdDispatchIndirect vkCmdDispatchIndirect;
 PFN_vkCmdUpdateBuffer vkCmdUpdateBuffer;
 PFN_vkCmdFillBuffer vkCmdFillBuffer;
 PFN_vkCmdClearColorImage vkCmdClearColorImage;
 PFN_vkCmdClearDepthStencilImage vkCmdClearDepthStencilImage;
-PFN_vkCmdClearAttachments vkCmdClearAttachments;
 PFN_vkCmdResolveImage vkCmdResolveImage;
-PFN_vkCmdSetEvent vkCmdSetEvent;
-PFN_vkCmdResetEvent vkCmdResetEvent;
-PFN_vkCmdWaitEvents vkCmdWaitEvents;
-PFN_vkCmdPipelineBarrier vkCmdPipelineBarrier;
 PFN_vkCmdBeginQuery vkCmdBeginQuery;
 PFN_vkCmdEndQuery vkCmdEndQuery;
 PFN_vkCmdResetQueryPool vkCmdResetQueryPool;
 PFN_vkCmdWriteTimestamp vkCmdWriteTimestamp;
 PFN_vkCmdCopyQueryPoolResults vkCmdCopyQueryPoolResults;
-PFN_vkCmdPushConstants vkCmdPushConstants;
-PFN_vkCmdBeginRenderPass vkCmdBeginRenderPass;
 PFN_vkCmdNextSubpass vkCmdNextSubpass;
-PFN_vkCmdEndRenderPass vkCmdEndRenderPass;
 PFN_vkCmdExecuteCommands vkCmdExecuteCommands;
 
-#ifdef ANDROID
+#ifdef __ANDROID__
 PFN_vkCreateAndroidSurfaceKHR vkCreateAndroidSurfaceKHR;
 #elif defined(_WIN32)
 PFN_vkCreateWin32SurfaceKHR vkCreateWin32SurfaceKHR;
+#endif
+#if defined(VK_USE_PLATFORM_XLIB_KHR)
+PFN_vkCreateXlibSurfaceKHR vkCreateXlibSurfaceKHR;
+#endif
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR)
+PFN_vkCreateWaylandSurfaceKHR vkCreateWaylandSurfaceKHR;
 #endif
 
 PFN_vkDestroySurfaceKHR vkDestroySurfaceKHR;
@@ -180,9 +192,23 @@ PFN_vkGetSwapchainImagesKHR vkGetSwapchainImagesKHR;
 PFN_vkAcquireNextImageKHR vkAcquireNextImageKHR;
 PFN_vkQueuePresentKHR vkQueuePresentKHR;
 
-// And the DEBUG_REPORT extension.
+// And the DEBUG_REPORT extension. We dynamically load this.
 PFN_vkCreateDebugReportCallbackEXT vkCreateDebugReportCallbackEXT;
 PFN_vkDestroyDebugReportCallbackEXT vkDestroyDebugReportCallbackEXT;
+
+PFN_vkCreateDebugUtilsMessengerEXT   vkCreateDebugUtilsMessengerEXT;
+PFN_vkDestroyDebugUtilsMessengerEXT	 vkDestroyDebugUtilsMessengerEXT;
+PFN_vkCmdBeginDebugUtilsLabelEXT	 vkCmdBeginDebugUtilsLabelEXT;
+PFN_vkCmdEndDebugUtilsLabelEXT		 vkCmdEndDebugUtilsLabelEXT;
+PFN_vkCmdInsertDebugUtilsLabelEXT	 vkCmdInsertDebugUtilsLabelEXT;
+PFN_vkSetDebugUtilsObjectNameEXT     vkSetDebugUtilsObjectNameEXT;
+PFN_vkSetDebugUtilsObjectTagEXT      vkSetDebugUtilsObjectTagEXT;
+
+PFN_vkGetMemoryHostPointerPropertiesEXT vkGetMemoryHostPointerPropertiesEXT;
+PFN_vkGetBufferMemoryRequirements2KHR vkGetBufferMemoryRequirements2KHR;
+PFN_vkGetImageMemoryRequirements2KHR vkGetImageMemoryRequirements2KHR;
+PFN_vkGetPhysicalDeviceProperties2KHR vkGetPhysicalDeviceProperties2KHR;
+PFN_vkGetPhysicalDeviceFeatures2KHR vkGetPhysicalDeviceFeatures2KHR;
 
 #ifdef _WIN32
 static HINSTANCE vulkanLibrary;
@@ -191,20 +217,200 @@ static HINSTANCE vulkanLibrary;
 static void *vulkanLibrary;
 #endif
 
+bool g_vulkanAvailabilityChecked = false;
+bool g_vulkanMayBeAvailable = false;
+
 #define LOAD_INSTANCE_FUNC(instance, x) x = (PFN_ ## x)vkGetInstanceProcAddr(instance, #x); if (!x) {ILOG("Missing (instance): %s", #x);}
 #define LOAD_DEVICE_FUNC(instance, x) x = (PFN_ ## x)vkGetDeviceProcAddr(instance, #x); if (!x) {ILOG("Missing (device): %s", #x);}
 #define LOAD_GLOBAL_FUNC(x) x = (PFN_ ## x)dlsym(vulkanLibrary, #x); if (!x) {ILOG("Missing (global): %s", #x);}
 
+#define LOAD_GLOBAL_FUNC_LOCAL(lib, x) (PFN_ ## x)dlsym(lib, #x);
 
-bool VulkanLoad() {
+static const char *so_names[] = {
+	"libvulkan.so",
+	"libvulkan.so.1",
+};
+
+void VulkanSetAvailable(bool available) {
+	g_vulkanAvailabilityChecked = true;
+	g_vulkanMayBeAvailable = available;
+}
+
+bool VulkanMayBeAvailable() {
+	if (g_vulkanAvailabilityChecked)
+		return g_vulkanMayBeAvailable;
 #ifndef _WIN32
-	vulkanLibrary = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
+	void *lib = nullptr;
+	for (int i = 0; i < ARRAY_SIZE(so_names); i++) {
+		lib = dlopen(so_names[i], RTLD_NOW | RTLD_LOCAL);
+		if (lib) {
+			break;
+		}
+	}
 #else
 	// LoadLibrary etc
-	vulkanLibrary = LoadLibrary(L"vulkan-1.dll");
+	HINSTANCE lib = LoadLibrary(L"vulkan-1.dll");
 #endif
-	if (!vulkanLibrary) {
+	if (!lib) {
+		g_vulkanAvailabilityChecked = true;
+		g_vulkanMayBeAvailable = false;
 		return false;
+	}
+
+	// Do a hyper minimal initialization and teardown to figure out if there's any chance
+	// that any sort of Vulkan will be usable.
+	PFN_vkEnumerateInstanceExtensionProperties localEnumerateInstanceExtensionProperties = LOAD_GLOBAL_FUNC_LOCAL(lib, vkEnumerateInstanceExtensionProperties);
+	PFN_vkCreateInstance localCreateInstance = LOAD_GLOBAL_FUNC_LOCAL(lib, vkCreateInstance);
+	PFN_vkEnumeratePhysicalDevices localEnumerate = LOAD_GLOBAL_FUNC_LOCAL(lib, vkEnumeratePhysicalDevices);
+	PFN_vkDestroyInstance localDestroyInstance = LOAD_GLOBAL_FUNC_LOCAL(lib, vkDestroyInstance);
+	PFN_vkGetPhysicalDeviceProperties localGetPhysicalDeviceProperties = LOAD_GLOBAL_FUNC_LOCAL(lib, vkGetPhysicalDeviceProperties);
+
+	// Need to predeclare all this because of the gotos...
+	VkInstanceCreateInfo ci{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+	VkApplicationInfo info{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
+	std::vector<VkPhysicalDevice> devices;
+	bool anyGood = false;
+	const char *instanceExtensions[2]{};
+	VkInstance instance = VK_NULL_HANDLE;
+	VkResult res;
+	uint32_t physicalDeviceCount = 0;
+	uint32_t instanceExtCount = 1;
+	bool surfaceExtensionFound = false;
+	bool platformSurfaceExtensionFound = false;
+	std::vector<VkExtensionProperties> instanceExts;
+	instanceExtensions[ci.enabledExtensionCount++] = VK_KHR_SURFACE_EXTENSION_NAME;
+
+#ifdef _WIN32
+	const char * const platformSurfaceExtension = VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
+#elif defined(__ANDROID__)
+	const char *platformSurfaceExtension = VK_KHR_ANDROID_SURFACE_EXTENSION_NAME;
+#else
+	const char *platformSurfaceExtension = 0;
+#endif
+
+	if (!localEnumerateInstanceExtensionProperties || !localCreateInstance || !localEnumerate || !localDestroyInstance || !localGetPhysicalDeviceProperties)
+		goto bail;
+
+	res = localEnumerateInstanceExtensionProperties(nullptr, &instanceExtCount, nullptr);
+	// Maximum paranoia.
+	if (res != VK_SUCCESS) {
+		ELOG("Enumerating VK extensions failed.");
+		goto bail;
+	}
+	if (instanceExtCount == 0) {
+		ELOG("No VK instance extensions - won't be able to present.");
+		goto bail;
+	}
+	instanceExts.resize(instanceExtCount);
+	res = localEnumerateInstanceExtensionProperties(nullptr, &instanceExtCount, instanceExts.data());
+	if (res != VK_SUCCESS) {
+		ELOG("Enumerating VK extensions failed.");
+		goto bail;
+	}
+
+	if (platformSurfaceExtension) {
+		for (auto iter : instanceExts) {
+			if (!strcmp(iter.extensionName, platformSurfaceExtension)) {
+				instanceExtensions[ci.enabledExtensionCount++] = platformSurfaceExtension;
+				platformSurfaceExtensionFound = true;
+				break;
+			} else if (!strcmp(iter.extensionName, VK_KHR_SURFACE_EXTENSION_NAME)) {
+				surfaceExtensionFound = true;
+			}
+		}
+		if (!platformSurfaceExtensionFound || !surfaceExtensionFound) {
+			ELOG("Platform surface extension not found");
+			goto bail;
+		}
+	}
+
+	ci.ppEnabledExtensionNames = instanceExtensions;
+	ci.enabledLayerCount = 0;
+	info.apiVersion = VK_API_VERSION_1_0;
+	info.applicationVersion = 1;
+	info.engineVersion = 1;
+	info.pApplicationName = "VulkanChecker";
+	info.pEngineName = "VulkanChecker";
+	ci.pApplicationInfo = &info;
+	ci.flags = 0;
+	res = localCreateInstance(&ci, nullptr, &instance);
+	if (res != VK_SUCCESS) {
+		instance = nullptr;
+		ELOG("Failed to create vulkan instance.");
+		goto bail;
+	}
+	ILOG("Vulkan test instance created successfully.");
+	res = localEnumerate(instance, &physicalDeviceCount, nullptr);
+	if (res != VK_SUCCESS) {
+		ELOG("Failed to count physical devices.");
+		goto bail;
+	}
+	if (physicalDeviceCount == 0) {
+		ELOG("No physical Vulkan devices.");
+		goto bail;
+	}
+	devices.resize(physicalDeviceCount);
+	res = localEnumerate(instance, &physicalDeviceCount, devices.data());
+	if (res != VK_SUCCESS) {
+		ELOG("Failed to enumerate physical devices.");
+		goto bail;
+	}
+	anyGood = false;
+	for (auto device : devices) {
+		VkPhysicalDeviceProperties props;
+		localGetPhysicalDeviceProperties(device, &props);
+		switch (props.deviceType) {
+		case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU:
+		case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU:
+		case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU:
+			anyGood = true;
+			break;
+		default:
+			break;
+		}
+		// TODO: Should also check queuefamilyproperties for a GRAPHICS queue family? Oh well.
+	}
+
+	if (!anyGood) {
+		WLOG("Found Vulkan API, but no good Vulkan device!");
+		g_vulkanMayBeAvailable = false;
+	} else {
+		ILOG("Found working Vulkan API!");
+		g_vulkanMayBeAvailable = true;
+	}
+
+bail:
+	g_vulkanAvailabilityChecked = true;
+	if (instance) {
+		localDestroyInstance(instance, nullptr);
+	}
+	if (lib) {
+#ifndef _WIN32
+		dlclose(lib);
+#else
+		FreeLibrary(lib);
+#endif
+	} else {
+		ELOG("Vulkan with working device not detected.");
+	}
+	return g_vulkanMayBeAvailable;
+}
+
+bool VulkanLoad() {
+	if (!vulkanLibrary) {
+#ifndef _WIN32
+		for (int i = 0; i < ARRAY_SIZE(so_names); i++) {
+			vulkanLibrary = dlopen(so_names[i], RTLD_NOW | RTLD_LOCAL);
+			if (vulkanLibrary)
+				break;
+		}
+#else
+		// LoadLibrary etc
+		vulkanLibrary = LoadLibrary(L"vulkan-1.dll");
+#endif
+		if (!vulkanLibrary) {
+			return false;
+		}
 	}
 
 	LOAD_GLOBAL_FUNC(vkCreateInstance);
@@ -218,7 +424,7 @@ bool VulkanLoad() {
 	return true;
 }
 
-void VulkanLoadInstanceFunctions(VkInstance instance) {
+void VulkanLoadInstanceFunctions(VkInstance instance, const VulkanDeviceExtensions &enabledExtensions) {
 	// OK, let's use the above functions to get the rest.
 	LOAD_INSTANCE_FUNC(instance, vkDestroyInstance);
 	LOAD_INSTANCE_FUNC(instance, vkEnumeratePhysicalDevices);
@@ -352,7 +558,7 @@ void VulkanLoadInstanceFunctions(VkInstance instance) {
 	LOAD_INSTANCE_FUNC(instance, vkCmdNextSubpass);
 	LOAD_INSTANCE_FUNC(instance, vkCmdEndRenderPass);
 	LOAD_INSTANCE_FUNC(instance, vkCmdExecuteCommands);
-	
+
 	LOAD_INSTANCE_FUNC(instance, vkGetPhysicalDeviceSurfaceSupportKHR);
 	LOAD_INSTANCE_FUNC(instance, vkGetPhysicalDeviceSurfaceCapabilitiesKHR);
 	LOAD_INSTANCE_FUNC(instance, vkGetPhysicalDeviceSurfaceFormatsKHR);
@@ -366,21 +572,45 @@ void VulkanLoadInstanceFunctions(VkInstance instance) {
 
 #ifdef _WIN32
 	LOAD_INSTANCE_FUNC(instance, vkCreateWin32SurfaceKHR);
-#elif defined(ANDROID)
+#elif defined(__ANDROID__)
 	LOAD_INSTANCE_FUNC(instance, vkCreateAndroidSurfaceKHR);
+#endif
+#if defined(VK_USE_PLATFORM_XLIB_KHR)
+	LOAD_INSTANCE_FUNC(instance, vkCreateXlibSurfaceKHR);
+#endif
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR)
+	LOAD_INSTANCE_FUNC(instance, vkCreateWaylandSurfaceKHR);
 #endif
 
 	LOAD_INSTANCE_FUNC(instance, vkDestroySurfaceKHR);
 
-	LOAD_INSTANCE_FUNC(instance, vkCreateDebugReportCallbackEXT);
-	LOAD_INSTANCE_FUNC(instance, vkDestroyDebugReportCallbackEXT);
+	if (enabledExtensions.KHR_get_physical_device_properties2) {
+		LOAD_INSTANCE_FUNC(instance, vkGetPhysicalDeviceProperties2KHR);
+		LOAD_INSTANCE_FUNC(instance, vkGetPhysicalDeviceFeatures2KHR);
+	}
+
+	if (enabledExtensions.EXT_debug_report) {
+		LOAD_INSTANCE_FUNC(instance, vkCreateDebugReportCallbackEXT);
+		LOAD_INSTANCE_FUNC(instance, vkDestroyDebugReportCallbackEXT);
+	}
+
+	if (enabledExtensions.EXT_debug_utils) {
+		LOAD_INSTANCE_FUNC(instance, vkCreateDebugUtilsMessengerEXT);
+		LOAD_INSTANCE_FUNC(instance, vkDestroyDebugUtilsMessengerEXT);
+		LOAD_INSTANCE_FUNC(instance, vkCmdBeginDebugUtilsLabelEXT);
+		LOAD_INSTANCE_FUNC(instance, vkCmdEndDebugUtilsLabelEXT);
+		LOAD_INSTANCE_FUNC(instance, vkCmdInsertDebugUtilsLabelEXT);
+		LOAD_INSTANCE_FUNC(instance, vkSetDebugUtilsObjectNameEXT);
+		LOAD_INSTANCE_FUNC(instance, vkSetDebugUtilsObjectTagEXT);
+	}
+
 	WLOG("Vulkan instance functions loaded.");
 }
 
 // On some implementations, loading functions (that have Device as their first parameter) via vkGetDeviceProcAddr may
 // increase performance - but then these function pointers will only work on that specific device. Thus, this loader is not very
 // good for multi-device.
-void VulkanLoadDeviceFunctions(VkDevice device) {
+void VulkanLoadDeviceFunctions(VkDevice device, const VulkanDeviceExtensions &enabledExtensions) {
 	WLOG("Vulkan device functions loaded.");
 	// TODO: Move more functions VulkanLoadInstanceFunctions to here.
 	LOAD_DEVICE_FUNC(device, vkCreateSwapchainKHR);
@@ -388,16 +618,22 @@ void VulkanLoadDeviceFunctions(VkDevice device) {
 	LOAD_DEVICE_FUNC(device, vkGetSwapchainImagesKHR);
 	LOAD_DEVICE_FUNC(device, vkAcquireNextImageKHR);
 	LOAD_DEVICE_FUNC(device, vkQueuePresentKHR);
+	if (enabledExtensions.EXT_external_memory_host) {
+		LOAD_DEVICE_FUNC(device, vkGetMemoryHostPointerPropertiesEXT);
+	}
+	if (enabledExtensions.KHR_dedicated_allocation) {
+		LOAD_DEVICE_FUNC(device, vkGetBufferMemoryRequirements2KHR);
+		LOAD_DEVICE_FUNC(device, vkGetImageMemoryRequirements2KHR);
+	}
 }
 
 void VulkanFree() {
+	if (vulkanLibrary) {
 #ifdef _WIN32
-	if (vulkanLibrary) {
 		FreeLibrary(vulkanLibrary);
-	}
 #else
-	if (vulkanLibrary) {
 		dlclose(vulkanLibrary);
-	}
 #endif
+		vulkanLibrary = nullptr;
+	}
 }

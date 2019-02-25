@@ -22,7 +22,7 @@
 #include "CPUDetect.h"
 
 #ifdef _M_SSE
-#include <xmmintrin.h>
+#include <emmintrin.h>
 #endif
 
 #if _M_SSE >= 0x401
@@ -137,7 +137,7 @@ void convert5551_dx9(u16* data, u32* out, int width, int l, int u) {
 
 
 
-void ConvertBGRA8888ToRGBA8888(u32 *dst, const u32 *src, const u32 numPixels) {
+void ConvertBGRA8888ToRGBA8888(u32 *dst, const u32 *src, u32 numPixels) {
 #ifdef _M_SSE
 	const __m128i maskGA = _mm_set1_epi32(0xFF00FF00);
 
@@ -170,7 +170,7 @@ void ConvertBGRA8888ToRGBA8888(u32 *dst, const u32 *src, const u32 numPixels) {
 	}
 }
 
-void ConvertRGBA8888ToRGBA5551(u16 *dst, const u32 *src, const u32 numPixels) {
+void ConvertRGBA8888ToRGBA5551(u16 *dst, const u32 *src, u32 numPixels) {
 #if _M_SSE >= 0x401
 	const __m128i maskAG = _mm_set1_epi32(0x8000F800);
 	const __m128i maskRB = _mm_set1_epi32(0x00F800F8);
@@ -212,7 +212,7 @@ void ConvertRGBA8888ToRGBA5551(u16 *dst, const u32 *src, const u32 numPixels) {
 	}
 }
 
-void ConvertBGRA8888ToRGBA5551(u16 *dst, const u32 *src, const u32 numPixels) {
+void ConvertBGRA8888ToRGBA5551(u16 *dst, const u32 *src, u32 numPixels) {
 #if _M_SSE >= 0x401
 	const __m128i maskAG = _mm_set1_epi32(0x8000F800);
 	const __m128i maskRB = _mm_set1_epi32(0x00F800F8);
@@ -254,31 +254,31 @@ void ConvertBGRA8888ToRGBA5551(u16 *dst, const u32 *src, const u32 numPixels) {
 	}
 }
 
-void ConvertBGRA8888ToRGB565(u16 *dst, const u32 *src, const u32 numPixels) {
+void ConvertBGRA8888ToRGB565(u16 *dst, const u32 *src, u32 numPixels) {
 	for (u32 i = 0; i < numPixels; i++) {
 		dst[i] = BGRA8888toRGB565(src[i]);
 	}
 }
 
-void ConvertBGRA8888ToRGBA4444(u16 *dst, const u32 *src, const u32 numPixels) {
+void ConvertBGRA8888ToRGBA4444(u16 *dst, const u32 *src, u32 numPixels) {
 	for (u32 i = 0; i < numPixels; i++) {
 		dst[i] = BGRA8888toRGBA4444(src[i]);
 	}
 }
 
-void ConvertRGBA8888ToRGB565(u16 *dst, const u32 *src, const u32 numPixels) {
+void ConvertRGBA8888ToRGB565(u16 *dst, const u32 *src, u32 numPixels) {
 	for (u32 x = 0; x < numPixels; ++x) {
 		dst[x] = RGBA8888toRGB565(src[x]);
 	}
 }
 
-void ConvertRGBA8888ToRGBA4444(u16 *dst, const u32 *src, const u32 numPixels) {
+void ConvertRGBA8888ToRGBA4444(u16 *dst, const u32 *src, u32 numPixels) {
 	for (u32 x = 0; x < numPixels; ++x) {
 		dst[x] = RGBA8888toRGBA4444(src[x]);
 	}
 }
 
-void ConvertRGBA565ToRGBA8888(u32 *dst32, const u16 *src, const u32 numPixels) {
+void ConvertRGBA565ToRGBA8888(u32 *dst32, const u16 *src, u32 numPixels) {
 #ifdef _M_SSE
 	const __m128i mask5 = _mm_set1_epi16(0x001f);
 	const __m128i mask6 = _mm_set1_epi16(0x003f);
@@ -332,7 +332,7 @@ void ConvertRGBA565ToRGBA8888(u32 *dst32, const u16 *src, const u32 numPixels) {
 	}
 }
 
-void ConvertRGBA5551ToRGBA8888(u32 *dst32, const u16 *src, const u32 numPixels) {
+void ConvertRGBA5551ToRGBA8888(u32 *dst32, const u16 *src, u32 numPixels) {
 #ifdef _M_SSE
 	const __m128i mask5 = _mm_set1_epi16(0x001f);
 	const __m128i mask8 = _mm_set1_epi16(0x00ff);
@@ -386,7 +386,7 @@ void ConvertRGBA5551ToRGBA8888(u32 *dst32, const u16 *src, const u32 numPixels) 
 	}
 }
 
-void ConvertRGBA4444ToRGBA8888(u32 *dst32, const u16 *src, const u32 numPixels) {
+void ConvertRGBA4444ToRGBA8888(u32 *dst32, const u16 *src, u32 numPixels) {
 #ifdef _M_SSE
 	const __m128i mask4 = _mm_set1_epi16(0x000f);
 
@@ -435,7 +435,40 @@ void ConvertRGBA4444ToRGBA8888(u32 *dst32, const u16 *src, const u32 numPixels) 
 	}
 }
 
-void ConvertRGBA4444ToBGRA8888(u32 *dst32, const u16 *src, const u32 numPixels) {
+void ConvertABGR565ToRGBA8888(u32 *dst32, const u16 *src, u32 numPixels) {
+	u8 *dst = (u8 *)dst32;
+	for (u32 x = 0; x < numPixels; x++) {
+		u16 col = src[x];
+		dst[x * 4] = Convert5To8((col >> 11) & 0x1f);
+		dst[x * 4 + 1] = Convert6To8((col >> 5) & 0x3f);
+		dst[x * 4 + 2] = Convert5To8((col) & 0x1f);
+		dst[x * 4 + 3] = 255;
+	}
+}
+
+void ConvertABGR1555ToRGBA8888(u32 *dst32, const u16 *src, u32 numPixels) {
+	u8 *dst = (u8 *)dst32;
+	for (u32 x = 0; x < numPixels; x++) {
+		u16 col = src[x];
+		dst[x * 4] = Convert5To8((col >> 11) & 0x1f);
+		dst[x * 4 + 1] = Convert5To8((col >> 6) & 0x1f);
+		dst[x * 4 + 2] = Convert5To8((col >> 1) & 0x1f);
+		dst[x * 4 + 3] = (col & 1) ? 255 : 0;
+	}
+}
+
+void ConvertABGR4444ToRGBA8888(u32 *dst32, const u16 *src, u32 numPixels) {
+	u8 *dst = (u8 *)dst32;
+	for (u32 x = 0; x < numPixels; x++) {
+		u16 col = src[x];
+		dst[x * 4] = Convert4To8(col >> 12);
+		dst[x * 4 + 1] = Convert4To8((col >> 8) & 0xf);
+		dst[x * 4 + 2] = Convert4To8((col >> 4) & 0xf);
+		dst[x * 4 + 3] = Convert4To8(col & 0xf);
+	}
+}
+
+void ConvertRGBA4444ToBGRA8888(u32 *dst32, const u16 *src, u32 numPixels) {
 	u8 *dst = (u8 *)dst32;
 	for (u32 x = 0; x < numPixels; x++) {
 		u16 c = src[x];
@@ -448,7 +481,7 @@ void ConvertRGBA4444ToBGRA8888(u32 *dst32, const u16 *src, const u32 numPixels) 
 	}
 }
 
-void ConvertRGBA5551ToBGRA8888(u32 *dst, const u16 *src, const u32 numPixels) {
+void ConvertRGBA5551ToBGRA8888(u32 *dst, const u16 *src, u32 numPixels) {
 	for (u32 x = 0; x < numPixels; x++) {
 		u16 c = src[x];
 		u32 r = c & 0x001f;
@@ -461,7 +494,7 @@ void ConvertRGBA5551ToBGRA8888(u32 *dst, const u16 *src, const u32 numPixels) {
 	}
 }
 
-void ConvertRGB565ToBGRA8888(u32 *dst, const u16 *src, const u32 numPixels) {
+void ConvertRGB565ToBGRA8888(u32 *dst, const u16 *src, u32 numPixels) {
 	for (u32 x = 0; x < numPixels; x++) {
 		u16 c = src[x];
 		u32 r = c & 0x001f;
@@ -472,7 +505,7 @@ void ConvertRGB565ToBGRA8888(u32 *dst, const u16 *src, const u32 numPixels) {
 	}
 }
 
-void ConvertRGBA4444ToABGR4444Basic(u16 *dst, const u16 *src, const u32 numPixels) {
+void ConvertRGBA4444ToABGR4444Basic(u16 *dst, const u16 *src, u32 numPixels) {
 #ifdef _M_SSE
 	const __m128i mask0040 = _mm_set1_epi16(0x00F0);
 
@@ -516,7 +549,7 @@ void ConvertRGBA4444ToABGR4444Basic(u16 *dst, const u16 *src, const u32 numPixel
 	}
 }
 
-void ConvertRGBA5551ToABGR1555Basic(u16 *dst, const u16 *src, const u32 numPixels) {
+void ConvertRGBA5551ToABGR1555Basic(u16 *dst, const u16 *src, u32 numPixels) {
 #ifdef _M_SSE
 	const __m128i maskB = _mm_set1_epi16(0x003E);
 	const __m128i maskG = _mm_set1_epi16(0x07C0);
@@ -561,7 +594,7 @@ void ConvertRGBA5551ToABGR1555Basic(u16 *dst, const u16 *src, const u32 numPixel
 	}
 }
 
-void ConvertRGB565ToBGR565Basic(u16 *dst, const u16 *src, const u32 numPixels) {
+void ConvertRGB565ToBGR565Basic(u16 *dst, const u16 *src, u32 numPixels) {
 #ifdef _M_SSE
 	const __m128i maskG = _mm_set1_epi16(0x07E0);
 
@@ -610,7 +643,7 @@ Convert16bppTo16bppFunc ConvertRGB565ToBGR565 = &ConvertRGB565ToBGR565Basic;
 #endif
 
 void SetupColorConv() {
-#if defined(HAVE_ARMV7) && !defined(ARM64)
+#if PPSSPP_ARCH(ARM_NEON) && !PPSSPP_ARCH(ARM64)
 	if (cpu_info.bNEON) {
 		ConvertRGBA4444ToABGR4444 = &ConvertRGBA4444ToABGR4444NEON;
 		ConvertRGBA5551ToABGR1555 = &ConvertRGBA5551ToABGR1555NEON;

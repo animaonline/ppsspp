@@ -164,16 +164,9 @@ void ApplyPrefixD(float *v, VectorSize size, bool onlyWriteMask = false)
 	{
 		int sat = (data >> (i * 2)) & 3;
 		if (sat == 1)
-		{
-			if (v[i] > 1.0f) v[i] = 1.0f;
-			// This includes -0.0f -> +0.0f.
-			if (v[i] <= 0.0f) v[i] = 0.0f;
-		}
+			v[i] = vfpu_clamp(v[i], 0.0f, 1.0f);
 		else if (sat == 3)
-		{
-			if (v[i] > 1.0f)  v[i] = 1.0f;
-			if (v[i] < -1.0f) v[i] = -1.0f;
-		}
+			v[i] = vfpu_clamp(v[i], -1.0f, 1.0f);
 	}
 }
 
@@ -551,15 +544,24 @@ namespace MIPSInt
 
 	void Int_Vocp(MIPSOpcode op)
 	{
-		float s[4], d[4];
+		float s[4], t[4], d[4];
 		int vd = _VD;
 		int vs = _VS;
 		VectorSize sz = GetVecSize(op);
 		ReadVector(s, sz, vs);
-		for (int i = 0; i < GetNumVectorElements(sz); i++)
-		{
-			// Always positive NaN.
-			d[i] = my_isnan(s[i]) ? fabsf(s[i]) : 1.0f - s[i];
+
+		// S prefix forces the negate flags.
+		u32 sprefix = currentMIPS->vfpuCtrl[VFPU_CTRL_SPREFIX];
+		ApplyPrefixST(s, sprefix | 0x000F0000, sz);
+
+		// T prefix forces constants on and regnum to 1.
+		// That means negate still works, and abs activates a different constant.
+		u32 tprefix = currentMIPS->vfpuCtrl[VFPU_CTRL_TPREFIX];
+		ApplyPrefixST(t, (tprefix & ~0x000000FF) | 0x00000055 | 0x0000F000, sz);
+
+		for (int i = 0; i < GetNumVectorElements(sz); i++) {
+			// Always positive NaN.  Note that s is always negated from the registers.
+			d[i] = my_isnan(s[i]) ? fabsf(s[i]) : t[i] + s[i];
 		}
 		ApplyPrefixD(d, sz);
 		WriteVector(d, sz, vd);
@@ -569,22 +571,32 @@ namespace MIPSInt
 	
 	void Int_Vsocp(MIPSOpcode op)
 	{
-		float s[4], d[4];
+		float s[4], t[4], d[4];
 		int vd = _VD;
 		int vs = _VS;
 		VectorSize sz = GetVecSize(op);
+		VectorSize outSize = GetDoubleVectorSize(sz);
 		ReadVector(s, sz, vs);
+
+		// S prefix forces negate in even/odd and xxyy swizzle.
+		// abs works, and applies to final position (not source.)
+		u32 sprefix = currentMIPS->vfpuCtrl[VFPU_CTRL_SPREFIX];
+		ApplyPrefixST(s, (sprefix & ~0x000F00FF) | 0x00000050 | 0x00050000, outSize);
+
+		// T prefix forces constants on and regnum to 0, 1, 0, 1.
+		// That means negate still works, and abs activates a different constant.
+		u32 tprefix = currentMIPS->vfpuCtrl[VFPU_CTRL_TPREFIX];
+		ApplyPrefixST(t, (tprefix & ~0x000000FF) | 0x00000011 | 0x0000F000, outSize);
+
 		int n = GetNumVectorElements(sz);
-		float x = s[0];
-		d[0] = nanclamp(1.0f - x, 0.0f, 1.0f);
-		d[1] = nanclamp(x, 0.0f, 1.0f);
-		VectorSize outSize = V_Pair;
-		if (n > 1) {
-			float y = s[1];
-			d[2] = nanclamp(1.0f - y, 0.0f, 1.0f);
-			d[3] = nanclamp(y, 0.0f, 1.0f);
-			outSize = V_Quad;
-		} 
+		// Essentially D prefix saturation is forced.
+		d[0] = nanclamp(t[0] + s[0], 0.0f, 1.0f);
+		d[1] = nanclamp(t[1] + s[1], 0.0f, 1.0f);
+		if (outSize == V_Quad) {
+			d[2] = nanclamp(t[2] + s[2], 0.0f, 1.0f);
+			d[3] = nanclamp(t[3] + s[3], 0.0f, 1.0f);
+		}
+		ApplyPrefixD(d, sz);
 		WriteVector(d, outSize, vd);
 		PC += 4;
 		EatPrefixes();
@@ -768,7 +780,6 @@ namespace MIPSInt
 			// conversion between 8-bit and 16-bit values.  But then why not do it in vc2i?
 			{
 				u32 value = s[0];
-				u32 value2 = value / 2;
 				for (int i = 0; i < 4; i++) {
 					d[i] = (u32)((value & 0xFF) * 0x01010101) >> 1;
 					value >>= 8;
@@ -936,6 +947,7 @@ namespace MIPSInt
 		u32 s[4];
 		VectorSize sz = V_Quad;
 		ReadVector(reinterpret_cast<float *>(s), sz, vs);
+		ApplySwizzleS(reinterpret_cast<float *>(s), sz);
 		u16 colors[4];
 		for (int i = 0; i < 4; i++)
 		{
@@ -973,6 +985,7 @@ namespace MIPSInt
 			colors[i] = col;
 		}
 		u32 ov[2] = {(u32)colors[0] | (colors[1] << 16), (u32)colors[2] | (colors[3] << 16)};
+		ApplyPrefixD(reinterpret_cast<float *>(ov), V_Pair);
 		WriteVector((const float *)ov, V_Pair, vd);
 		PC += 4;
 		EatPrefixes();
@@ -1303,6 +1316,7 @@ namespace MIPSInt
 
 	// Generates one line of a rotation matrix around one of the three axes
 	void Int_Vrot(MIPSOpcode op) {
+		// Note: prefixes behave strangely for this.
 		int vd = _VD;
 		int vs = _VS;
 		int imm = (op >> 16) & 0x1f;
@@ -1365,8 +1379,8 @@ namespace MIPSInt
 		{
 			for (int i = 0; i < n; i++)
 			{
-				d[i] = 0.0f;
-				for (int k = 0; k < n; k++)
+				d[i] = s[i*4] * t[0];
+				for (int k = 1; k < n; k++)
 				{
 					d[i] += s[i*4+k] * t[k];
 				}
@@ -1376,7 +1390,8 @@ namespace MIPSInt
 		{
 			Reporting::ReportMessage("Trying to interpret instruction that can't be interpreted (BADVTFM)");
 			_dbg_assert_msg_(CPU,0,"Trying to interpret instruction that can't be interpreted (BADVTFM)");
-			memset(d, 0, sizeof(d));
+			for (int i = 0; i < n; i++)
+				d[i] = 0.0;
 		}
 		WriteVector(d, sz, vd);
 		PC += 4;
@@ -1805,11 +1820,33 @@ bad:
 
 	void Int_Vlgb(MIPSOpcode op)
 	{
-		// S & D valid
-		Reporting::ReportMessage("vlgb not implemented");
-		if (!PSP_CoreParameter().headLess) {
-			_dbg_assert_msg_(CPU,0,"vlgb not implemented");
+		// Vector log binary (extract exponent)
+		int vd = _VD;
+		int vs = _VS;
+		VectorSize sz = GetVecSize(op);
+
+		FloatBits d;
+		FloatBits s;
+
+		ReadVector(s.f, sz, vs);
+		// TODO: Test swizzle, t?
+		ApplySwizzleS(s.f, sz);
+
+		if (sz != V_Single) {
+			ERROR_LOG_REPORT(CPU, "vlgb not implemented for size %d", GetNumVectorElements(sz));
 		}
+		for (int i = 0; i < GetNumVectorElements(sz); ++i) {
+			int exp = (s.u[i] & 0x7F800000) >> 23;
+			if (exp == 0xFF) {
+				d.f[i] = s.f[i];
+			} else if (exp == 0) {
+				d.f[i] = -INFINITY;
+			} else {
+				d.f[i] = (float)(exp - 127);
+			}
+		}
+		ApplyPrefixD(d.f, sz);
+		WriteVector(d.f, sz, vd);
 		PC += 4;
 		EatPrefixes();
 	}
@@ -1890,10 +1927,31 @@ bad:
 
 	void Int_Vsbz(MIPSOpcode op)
 	{
-		Reporting::ReportMessage("vsbz not implemented");
-		if (!PSP_CoreParameter().headLess) {
-			_dbg_assert_msg_(CPU,0,"vsbz not implemented");
+		// Vector scale by zero (set exp to 0 to extract mantissa)
+		int vd = _VD;
+		int vs = _VS;
+		VectorSize sz = GetVecSize(op);
+
+		FloatBits d;
+		FloatBits s;
+
+		ReadVector(s.f, sz, vs);
+		// TODO: Test swizzle, t?
+		ApplySwizzleS(s.f, sz);
+
+		if (sz != V_Single) {
+			ERROR_LOG_REPORT(CPU, "vsbz not implemented for size %d", GetNumVectorElements(sz));
 		}
+		for (int i = 0; i < GetNumVectorElements(sz); ++i) {
+			// NAN and denormals pass through.
+			if (my_isnan(s.f[i]) || (s.u[i] & 0x7F800000) == 0) {
+				d.u[i] = s.u[i];
+			} else {
+				d.u[i] = (127 << 23) | (s.u[i] & 0x007FFFFF);
+			}
+		}
+		ApplyPrefixD(d.f, sz);
+		WriteVector(d.f, sz, vd);
 		PC += 4;
 		EatPrefixes();
 	}

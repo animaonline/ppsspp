@@ -36,7 +36,9 @@ enum {
 	// Don't allow the call if dispatch or interrupts are disabled.
 	HLE_NOT_DISPATCH_SUSPENDED = 1 << 9,
 	// Indicates the call should write zeros to the stack (stackBytesToClear in the table.)
-	HLE_CLEAR_STACK_BYTES = 1 << 10
+	HLE_CLEAR_STACK_BYTES = 1 << 10,
+	// Indicates that this call operates in kernel mode.
+	HLE_KERNEL_SYSCALL = 1 << 11,
 };
 
 struct HLEFunction
@@ -90,10 +92,6 @@ struct Syscall
 #define RETURN64(n) {u64 RETURN64_tmp = n; currentMIPS->r[MIPS_REG_V0] = RETURN64_tmp & 0xFFFFFFFF; currentMIPS->r[MIPS_REG_V1] = RETURN64_tmp >> 32;}
 #define RETURNF(fl) currentMIPS->f[0] = fl
 
-#ifndef ARRAY_SIZE
-#define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
-#endif
-
 const char *GetFuncName(const char *module, u32 nib);
 const char *GetFuncName(int module, int func);
 const HLEFunction *GetFunc(const char *module, u32 nib);
@@ -116,6 +114,8 @@ void hleDebugBreak();
 void hleSkipDeadbeef();
 // Set time spent in debugger (for more useful debug stats while debugging.)
 void hleSetSteppingTime(double t);
+// Check if the current syscall context is kernel.
+bool hleIsKernelMode();
 
 // Delays the result for usec microseconds, allowing other threads to run during this time.
 u32 hleDelayResult(u32 result, const char *reason, int usec);
@@ -144,7 +144,7 @@ void CallSyscall(MIPSOpcode op);
 void WriteFuncStub(u32 stubAddr, u32 symAddr);
 void WriteFuncMissingStub(u32 stubAddr, u32 nid);
 
-const HLEFunction *GetSyscallInfo(MIPSOpcode op);
+const HLEFunction *GetSyscallFuncPointer(MIPSOpcode op);
 // For jit, takes arg: const HLEFunction *
 void *GetQuickSyscallFunc(MIPSOpcode op);
 

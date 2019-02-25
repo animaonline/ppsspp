@@ -164,15 +164,14 @@ void ReadVector(float *rd, VectorSize size, int reg) {
 	const int mtx = (reg >> 2) & 7;
 	const int col = reg & 3;
 
-	u32 *rdu = (u32 *)rd;
 	if (transpose) {
 		const int base = mtx * 4 + col * 32;
 		for (int i = 0; i < length; i++)
-			rdu[i] = VI(base + ((row+i)&3));
+			rd[i] = V(base + ((row+i)&3));
 	} else {
 		const int base = mtx * 4 + col;
 		for (int i = 0; i < length; i++)
-			rdu[i] = VI(base + ((row+i)&3)*32);
+			rd[i] = V(base + ((row+i)&3)*32);
 	}
 }
 
@@ -191,16 +190,15 @@ void WriteVector(const float *rd, VectorSize size, int reg) {
 	const int col = reg & 3;
 	int transpose = (reg>>5)&1;
 
-	u32 *rdu = (u32 *)rd;
 	if (currentMIPS->VfpuWriteMask() == 0) {
 		if (transpose) {
 			const int base = mtx * 4 + col * 32;
 			for (int i = 0; i < length; i++)
-				VI(base + ((row+i)&3)) = rdu[i];
+				V(base + ((row+i)&3)) = rd[i];
 		} else {
 			const int base = mtx * 4 + col;
 			for (int i = 0; i < length; i++)
-				VI(base + ((row+i)&3)*32) = rdu[i];
+				V(base + ((row+i)&3)*32) = rd[i];
 		}
 	} else {
 		for (int i = 0; i < length; i++) {
@@ -210,7 +208,7 @@ void WriteVector(const float *rd, VectorSize size, int reg) {
 					index += ((row+i)&3) + col*32;
 				else
 					index += col + ((row+i)&3)*32;
-				VI(index) = rdu[i];
+				V(index) = rd[i];
 			}
 		}
 	}
@@ -305,87 +303,131 @@ int GetNumVectorElements(VectorSize sz) {
 	}
 }
 
-VectorSize GetHalfVectorSize(VectorSize sz) {
+VectorSize GetHalfVectorSizeSafe(VectorSize sz) {
 	switch (sz) {
 	case V_Pair: return V_Single;
 	case V_Quad: return V_Pair;
-	default: _assert_msg_(JIT, 0, "%s: Bad vector size", __FUNCTION__); return V_Invalid;
+	default: return V_Invalid;
 	}
 }
 
-VectorSize GetDoubleVectorSize(VectorSize sz)
-{
-	switch (sz)
-	{
+VectorSize GetHalfVectorSize(VectorSize sz) {
+	VectorSize res = GetHalfVectorSizeSafe(sz);
+	_assert_msg_(JIT, res != V_Invalid, "%s: Bad vector size", __FUNCTION__);
+	return res;
+}
+
+VectorSize GetDoubleVectorSizeSafe(VectorSize sz) {
+	switch (sz) {
 	case V_Single: return V_Pair;
 	case V_Pair: return V_Quad;
-	default: _assert_msg_(JIT, 0, "%s: Bad vector size", __FUNCTION__); return V_Invalid;
+	default: return V_Invalid;
 	}
 }
 
-VectorSize GetVecSize(MIPSOpcode op)
-{
-	int a = (op>>7)&1;
-	int b = (op>>15)&1;
-	a += (b<<1);
-	switch (a)
-	{
-		case 0: return V_Single;
-		case 1: return V_Pair;
-		case 2: return V_Triple;
-		case 3: return V_Quad;
-		default: _assert_msg_(JIT, 0, "%s: Bad vector size", __FUNCTION__); return V_Invalid;
+VectorSize GetDoubleVectorSize(VectorSize sz) {
+	VectorSize res = GetDoubleVectorSizeSafe(sz);
+	_assert_msg_(JIT, res != V_Invalid, "%s: Bad vector size", __FUNCTION__);
+	return res;
+}
+
+VectorSize GetVecSizeSafe(MIPSOpcode op) {
+	int a = (op >> 7) & 1;
+	int b = (op >> 15) & 1;
+	a += (b << 1);
+	switch (a) {
+	case 0: return V_Single;
+	case 1: return V_Pair;
+	case 2: return V_Triple;
+	case 3: return V_Quad;
+	default: return V_Invalid;
 	}
 }
 
-VectorSize GetVectorSize(MatrixSize sz) {
+VectorSize GetVecSize(MIPSOpcode op) {
+	VectorSize res = GetVecSizeSafe(op);
+	_assert_msg_(JIT, res != V_Invalid, "%s: Bad vector size", __FUNCTION__);
+	return res;
+}
+
+VectorSize GetVectorSizeSafe(MatrixSize sz) {
 	switch (sz) {
 	case M_2x2: return V_Pair;
 	case M_3x3: return V_Triple;
 	case M_4x4: return V_Quad;
-	default: _assert_msg_(JIT, 0, "%s: Bad vector size", __FUNCTION__); return V_Invalid;
+	default: return V_Invalid;
 	}
 }
 
-MatrixSize GetMatrixSize(VectorSize sz) {
+VectorSize GetVectorSize(MatrixSize sz) {
+	VectorSize res = GetVectorSizeSafe(sz);
+	_assert_msg_(JIT, res != V_Invalid, "%s: Bad vector size", __FUNCTION__);
+	return res;
+}
+
+MatrixSize GetMatrixSizeSafe(VectorSize sz) {
 	switch (sz) {
 	case V_Single: return M_Invalid;
 	case V_Pair: return M_2x2;
 	case V_Triple: return M_3x3;
 	case V_Quad: return M_4x4;
-	default: _assert_msg_(JIT, 0, "%s: Bad vector size", __FUNCTION__); return M_Invalid;
+	default: return M_Invalid;
 	}
 }
 
-MatrixSize GetMtxSize(MIPSOpcode op) {
-	int a = (op>>7)&1;
-	int b = (op>>15)&1;
-	a += (b<<1);
+MatrixSize GetMatrixSize(VectorSize sz) {
+	MatrixSize res = GetMatrixSizeSafe(sz);
+	_assert_msg_(JIT, res != M_Invalid, "%s: Bad vector size", __FUNCTION__);
+	return res;
+}
+
+MatrixSize GetMtxSizeSafe(MIPSOpcode op) {
+	int a = (op >> 7) & 1;
+	int b = (op >> 15) & 1;
+	a += (b << 1);
 	switch (a) {
 	case 0: return M_4x4;  // This happens in disassembly of junk
 	case 1: return M_2x2;
 	case 2: return M_3x3;
 	case 3: return M_4x4;
-	default: _assert_msg_(JIT, 0, "%s: Bad matrix size", __FUNCTION__); return M_Invalid;
+	default: return M_Invalid;
 	}
 }
 
-VectorSize MatrixVectorSize(MatrixSize sz) {
+MatrixSize GetMtxSize(MIPSOpcode op) {
+	MatrixSize res = GetMtxSizeSafe(op);
+	_assert_msg_(JIT, res != M_Invalid, "%s: Bad matrix size", __FUNCTION__);
+	return res;
+}
+
+VectorSize MatrixVectorSizeSafe(MatrixSize sz) {
 	switch (sz) {
 	case M_2x2: return V_Pair;
 	case M_3x3: return V_Triple;
 	case M_4x4: return V_Quad;
-	default: _assert_msg_(JIT, 0, "%s: Bad matrix size", __FUNCTION__); return V_Invalid;
+	default: return V_Invalid;
 	}
 }
 
-int GetMatrixSide(MatrixSize sz) {
+VectorSize MatrixVectorSize(MatrixSize sz) {
+	VectorSize res = MatrixVectorSizeSafe(sz);
+	_assert_msg_(JIT, res != V_Invalid, "%s: Bad matrix size", __FUNCTION__);
+	return res;
+}
+
+int GetMatrixSideSafe(MatrixSize sz) {
 	switch (sz) {
 	case M_2x2: return 2;
 	case M_3x3: return 3;
 	case M_4x4: return 4;
-	default: _assert_msg_(JIT, 0, "%s: Bad matrix size", __FUNCTION__); return 0;
+	default: return 0;
 	}
+}
+
+int GetMatrixSide(MatrixSize sz) {
+	int res = MatrixVectorSizeSafe(sz);
+	_assert_msg_(JIT, res != 0, "%s: Bad matrix size", __FUNCTION__);
+	return res;
 }
 
 // TODO: Optimize

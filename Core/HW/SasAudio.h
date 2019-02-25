@@ -33,10 +33,12 @@ enum {
 
 	PSP_SAS_PITCH_MIN = 0x0000,
 	PSP_SAS_PITCH_BASE = 0x1000,
+	PSP_SAS_PITCH_MASK = 0xFFF,
 	PSP_SAS_PITCH_BASE_SHIFT = 12,
 	PSP_SAS_PITCH_MAX = 0x4000,
 
 	PSP_SAS_VOL_MAX = 0x1000,
+	PSP_SAS_MAX_GRAIN = 2048,   // Matches the max value of the parameter to sceSasInit
 
 	PSP_SAS_ADSR_CURVE_MODE_LINEAR_INCREASE = 0,
 	PSP_SAS_ADSR_CURVE_MODE_LINEAR_DECREASE = 1,
@@ -109,21 +111,21 @@ public:
 
 private:
 	s16 samples[28];
-	int curSample;
+	int curSample = 0;
 
-	u32 data_;
-	u32 read_;
-	int curBlock_;
-	int loopStartBlock_;
-	int numBlocks_;
+	u32 data_ = 0;
+	u32 read_ = 0;
+	int curBlock_ = -1;
+	int loopStartBlock_ = -1;
+	int numBlocks_ = 0;
 
 	// rolling state. start at 0, should probably reset to 0 on loops?
-	int s_1;
-	int s_2;
+	int s_1 = 0;
+	int s_2 = 0;
 
-	bool loopEnabled_;
-	bool loopAtNextBlock_;
-	bool end_;
+	bool loopEnabled_ = false;
+	bool loopAtNextBlock_ = false;
+	bool end_ = false;
 };
 
 class SasAtrac3 {
@@ -250,7 +252,7 @@ struct SasVoice {
 	int pcmLoopPos;
 	int sampleRate;
 
-	int sampleFrac;
+	uint32_t sampleFrac;
 	int pitch;
 	bool loop;
 
@@ -289,8 +291,6 @@ public:
 	s16 *sendBufferDownsampled;
 	s16 *sendBufferProcessed;
 
-	s16 *resampleBuffer;
-
 	FILE *audioDump;
 
 	void Mix(u32 outAddr, u32 inAddr = 0, int leftVol = 0, int rightVol = 0);
@@ -311,4 +311,5 @@ public:
 private:
 	SasReverb reverb_;
 	int grainSize;
+	int16_t mixTemp_[PSP_SAS_MAX_GRAIN * 4 + 2 + 8];  // some extra margin for very high pitches.
 };

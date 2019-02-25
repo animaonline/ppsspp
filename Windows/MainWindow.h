@@ -1,19 +1,26 @@
 #pragma once
 
+#include "ppsspp_config.h"
+
+#if !PPSSPP_PLATFORM(UWP)
+
 #include "Common/CommonWindows.h"
 #include <string>
 
 #include "Core/System.h"
 #include "MainWindowMenu.h"
 
+
 namespace MainWindow
 {
 	enum {
 		WM_USER_SAVESTATE_FINISH = WM_USER + 100,
 		WM_USER_UPDATE_UI = WM_USER + 101,
+		WM_USER_BROWSE_BG_DONE = WM_USER + 102,
 		WM_USER_WINDOW_TITLE_CHANGED = WM_USER + 103,
 		WM_USER_BROWSE_BOOT_DONE = WM_USER + 104,
 		WM_USER_TOGGLE_FULLSCREEN = WM_USER + 105,
+		WM_USER_RESTART_EMUTHREAD = WM_USER + 106,
 	};
 
 	enum {
@@ -27,6 +34,9 @@ namespace MainWindow
 		FRAMESKIP_7 = 7,
 		FRAMESKIP_8 = 8,
 		FRAMESKIP_MAX = FRAMESKIP_8,
+
+		FRAMESKIPTYPE_COUNT = 0,
+		FRAMESKIPTYPE_PRCNT = 1,
 
 		RESOLUTION_AUTO = 0,
 		RESOLUTION_NATIVE = 1,
@@ -54,7 +64,7 @@ namespace MainWindow
 	void CreateDebugWindows();
 	void DestroyDebugWindows();
 	void Close();
-	void UpdateMenus();
+	void UpdateMenus(bool isMenuSelect = false);
 	void UpdateCommands();
 	void SetWindowTitle(const wchar_t *title);
 	void Redraw();
@@ -68,3 +78,5 @@ namespace MainWindow
 	void SetInternalResolution(int res = -1);
 	void SetWindowSize(int zoom);
 }
+
+#endif

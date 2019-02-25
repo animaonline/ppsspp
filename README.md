@@ -8,132 +8,104 @@ Additional code by many contributors, see the Credits screen
 Originally released under the GPL 2.0 (and later) in November 2012
 
 Official website:
-http://www.ppsspp.org/
+https://www.ppsspp.org/
 
-No BIOS file required to play, PPSSPP is in many ways a "HLE" emulator.
+Discord:
+https://discord.gg/5NJB6dD
 
-To contribute, see [the development page](http://www.ppsspp.org/development.html).
+No BIOS file required to play, PPSSPP is an "HLE" emulator.  Default settings balance good compatibility and speed.
+
+To contribute, see [the development page](https://www.ppsspp.org/development.html).  Help testing, investigating, or fixing is always welcome.  See [the list of issues](https://github.com/hrydgard/ppsspp/issues).
 
 For the latest source code, see [our github page](https://github.com/hrydgard/ppsspp).
 
-For build instructions and other development tutorials, see the [wiki](https://github.com/hrydgard/ppsspp/wiki).
+For build instructions and other development tutorials, see [the wiki](https://github.com/hrydgard/ppsspp/wiki).
 
-What's new in 1.2.2
+For game compatibility, see [community compatibility feedback](https://report.ppsspp.org/games).
+
+
+What's new in 1.7.3/1.7.4/1.7.5
 -------------------
-* Went back to the old way of initializing graphics on Android. Should fix many recent issues.
-* Some graphical fixes, a vertex cache performance improvement and a screen clear optimization
-* Fix for dual source blending on most SHIELD devices, causing graphical issues.
-* Fix the homebrew store incorrectly unzipping some games. This will lead to more games being added.
-* Slightly faster ISO handling
+* Fixes for a couple of common crashes
+* Reverted immersive mode change temporarily to see if it helps misaligned buttons
+* Change default adhoc server address
 
-What's new in 1.2.1
+What's new in 1.7.2
 -------------------
-* Fixes for some crash-on-shutdown and app switching problems.
+* Update text of "Buy PPSSPP Gold" button
 
-What's new in 1.2.0
+What's new in 1.7.1
 -------------------
-* A major rework of sceAtrac audio decoding, fixing various music hangs and similar issues
-* Many fixes and workarounds to depth and stencil buffer usage, and also FBO management
-* Audio reverb support
-* Combo keys - custom touch buttons that press multiple PSP buttons
-* 5xBR upscaling on GPU (postprocessing effect)
-* Fix problems with playback of video with mono audio
-* Performance improvements like multithreaded audio mixing
-* ARM64 JIT crash bug fixes
-* GLSL shader cache to reduce stuttering ingame
-* Support render-to-CLUT functionality that some games use to change colors of various monsters
-* x86-64 support on Android
-* Auto-hide on-screen controls after a while of no usage
-* Fixes to prescale UV speedhack, now seems reliable
-* Faster ISO RAM cache
-* New UI for moving around the PSP display on larger screens
-* Minor UI fixes like better slider controls
-* Assorted stability fixes (ffmpeg crash, etc)
-* Volume setting is back
-* Preparations for supporting more graphics APIs
-* AdHoc port offset
-* Support another HD remaster (Sora no Kiseki Kai HD)
+* Minor crashfixes, lang updates
+* Save bug fixed (#11508)
 
-What's new in 1.1.1
+What's new in 1.7.0
 -------------------
-* Fixed new crash in Persona and other games on ARM64, like Galaxy S6
-* Fixed crashes when trying to launch web browser when not present on Android, like on Android TV
-* Fix crash in games that used "depal" functionality (OpenGL)
-* Fixed rounding mode problems in the JITs
-* Fix crash when loading savestates many times, and savestate compatibility on Android-x86
-* Fix minor glitch in Ridge Racer
+* Fix for insta-crash on Galaxy Note 9, some Xiaomi devices, and the new nVidia Shield (#11441)
+* Vertex range culling on most platforms, fixes DTM: Race Driver and similar (#11393)
+* Major speed boost in some Gundam and Earth Defense Force games (#10973)
+* Fix for issues with post processing shaders in GL 3+ (#11182)
+* Fixes to sound output switching on Windows (WASAPI) (#11438)
+* Detects DirectInput devices when running (#11461)
+* Simple Discord integration (#11307)
+* New debugging APIs (#10909)
+* Task switching made a lot more robust (fixes GPD XD problems) (#11447)
+* Texture decoding optimizations (#11350)
+* Tons and tons of miscellaneous bugfixes and compatibility fixes
 
-What's new in 1.1
------------------
-* Support for ARM64 on Android, for improved performance on new devices. Has some new optimizations.
-* Support Android TV, like nVidia Shield TV
-* Screen rotation on PC, useful for vertical games like Star Soldier
-* Many minor performance improvements and compatibility bug fixes
-* GPU emulation fixes like correct depth rounding, fixing text in Phantasy Star
-* Other graphical fixes like UV rotation
-* Support savestates for homebrew apps
-* Simple integrated "Homebrew Store" to download PSP homebrew apps
-* Minor AdHoc multiplayer improvements. Still many issues left.
-* Disable a dangerous optimization on ARM, causing walk-through-walls in Tenchu
-* sceAtrac music compatibility fixes, fixing noise in a few games
-* Better texture scaling performance
-* Direct3D closer in features to OpenGL
-* Works better on BSD operating systems
-* Savedata management UI
-
-What's new in 1.0.1
+What's new in 1.6.3
 -------------------
-* Bugfixes like the save state scroll issue, cosmetic issues like overscroll
-* Some cheat code bugfixes
-* Adler32 and Mersenne Twister modules added (fixes some obscure games)
-* Fix for Jak & Daxter slowdown
-* Graphics hack for Phantasy Star Portable 2 for Direct3D9
-* Fix compatibility with some PowerVR devices broken since v0.9.5-959-g4998044
+* Crashfixes, task switching and one in Phantasy Star Portable
+* Improve graphics in PoP on some devices
 
-What's new in 1.0
------------------
-* Many, many bug fixes in JIT and elsewhere, improving compatibility
-* Proper fix for Zenfone and related devices
-* Direct3D 9 supported as a rendering backend on Windows, helps on old GPUs and can be faster than OpenGL in many cases
-* You can now create specific configs per game
-* FPU rounding modes much better supported, fixes the Peace Walker boss that was undefeatable. NOTE: This breaks saves in Gods Eater - you must turn off the better rounding, load your save game, turn it on and save.
-* The JIT now uses SSE on x86, improving speed considerably. This does not affect ARM devices, that's for the next version or two.
-* Improved audio output code on both Windows and Android, reducing audio latency on Windows and on some Android systems
-* FFMPEG upgraded, fixed some music hangs ("GHA phase shifts")
-* Some Ad Hoc improvements, coldbird.net is now default adhoc server. Ad Hoc still unfinished and hard to use.
-* Graphics fixes: Bezier/spline drawing fixes, vertex position fixes, DanganRonpa on Adreno fixed, flat shading fixed, vertex cache improved, some PowerVR blockiness issues fixed, screen scaling filter added, Google Cardboard support
-* Simulate UMD speed better, fixing hangs in several games
-* More Atrac3 fixes, fixing hangs
-* Somewhat better disk full handling
-* Fixes to dynamic unloading of code, fixing problems in GEB and TRM 2/3
-* Updated to SDL2 where applicable (Linux, Mac)
-* Some new features, like analog/dpad-swap hotkey, graphics hack for Phantasy Star, show last bit of debug log in dev tools, etc
+What's new in 1.6.1, 1.6.2
+--------------------------
+* Crashfixes
+* Fix broken graphics in flOw.
+
+What's new in 1.6.0
+-------------------
+* OpenGL backend now properly multithreaded, giving a good speed boost.
+* Various Vulkan performance improvements (like #10911) and memory allocation fixes.
+* GPU command interpreter performance improvements (#10658)
+* Various fixes for app switching and widgets (#10855) on Android
+* Bugfixes and some performance improvements in the ARM64 JIT compiler and IR interpreter
+* Shader cache enabled for Vulkan
+* Multiple iOS fixes, including JIT (#10465) and file browser (#10921).
+* Improved compatibility on Mac (#10113)
+* Texture replacement ID bugfix (note: some textures from 1.5.4 may become incompatible)
+* Adhoc multiplayer fixes (#8975)
+* Vulkan support on Linux/SDL (#10413)
+* Retroarch support
+
+What's new in 1.5.4
+-------------------
+* Bugfixes and crashfixes!
+
+What's new in 1.5.0
+-------------------
+* Full Vulkan support, also for Android now. Very fast on supported devices. (#10033, #10049)
+* Smarter graphics state management, reduced CPU consumption on all backends (#9899)
+* Android: Support for Arabic and other scripts we couldn't support before
+* Fix Android widgets, screen scaling (#10145)
+* Fixes to video dumping
+* Geometry problems fixed in Medal of Honor
+* Implement immediate draws, fixing Thrillville (#7459)
+* Software rendering improvements, speed and accuracy
+* Hardware tesselation of PSP Beziers and Splines (used by a few games)
+* Partial sceUsbGps and sceUsbCam support (Android)
+* Android "Sustained performance mode" to avoid thermal throttling (#9901)
+* Linux controller mapping fixes (#9997)
+* Assorted bugfixes and compatibility improvements
+
+Looking for [older news](history.md)?
 
 
+Adhoc support
+-------------
+Not fully functional, but some games work.  Check the [Ad-Hoc section of the forum](http://forums.ppsspp.org/forumdisplay.php?fid=34) for help.
 
-ADHOC SUPPORT (by Igor Calabria)
-================================
-This is based on coldbird's code: http://code.google.com/p/aemu/
-All credit goes to him!
-
-Status
-------
-Code is a bit of a mess and it's not fully functional yet, I still need to implement
-some functions and add a upnp lib(really important for people with routers).
-
-I did test it with some games(emulator <-> real psp with the server running locally)
-and it's looking good:
-
-* Worms Open Warfare: Ran just fine, I was able to play a whole match without problems
-* Monster Hunter Freedom Unite: Runs fine too. Gathering Hall and embarking on quests works
-* Dissidia Duodecim 012: Doesn't work. It requires some functions that I haven't implemented
-yet. Also, it uses a port < 1000 and thats reserved for admin apps on linux, running the emu
-as sudo "solves" it, but it's far from ideal.
-* Pacman World Rally: Works too.
-
-Update (Kyhel) :
----------------
-* Now compiles on both Mac OSX and Windows. For more details on how to play and build
-go to see there http://forums.ppsspp.org/showthread.php?tid=3595&pid=59241#pid59241
-* Got it tested windows <-> mac osx <-> psp, it works
-* Monster Hunter 3rd HD works too, as well as God Eater Burst.
+Credit goes to:
+ - Igor Calabria
+ - [coldbird's code](https://code.google.com/archive/p/aemu/)
+ - Kyhel

@@ -45,35 +45,51 @@ enum PSPDirectories {
 	DIRECTORY_DUMP,
 	DIRECTORY_SAVESTATE,
 	DIRECTORY_CACHE,
+	DIRECTORY_TEXTURES,
 	DIRECTORY_APP_CACHE,  // Use the OS app cache if available
+	DIRECTORY_VIDEO,
+	DIRECTORY_AUDIO
 };
 
 class GraphicsContext;
 enum class GPUBackend;
 
+void ResetUIState();
 void UpdateUIState(GlobalUIState newState);
 GlobalUIState GetUIState();
 
-void SetGPUBackend(GPUBackend type);
+void SetGPUBackend(GPUBackend type, const std::string &device = "");
 GPUBackend GetGPUBackend();
+std::string GetGPUBackendDevice();
 
 bool PSP_Init(const CoreParameter &coreParam, std::string *error_string);
 bool PSP_InitStart(const CoreParameter &coreParam, std::string *error_string);
 bool PSP_InitUpdate(std::string *error_string);
 bool PSP_IsIniting();
 bool PSP_IsInited();
+bool PSP_IsQuitting();
 void PSP_Shutdown();
 
 void PSP_BeginHostFrame();
 void PSP_EndHostFrame();
+void PSP_RunLoopWhileState();
 void PSP_RunLoopUntil(u64 globalticks);
 void PSP_RunLoopFor(int cycles);
-void PSP_BeginFrame();
-void PSP_EndFrame();
+
+void PSP_SetLoading(const std::string &reason);
+std::string PSP_GetLoading();
+
+// Used to wait for background loading thread.
+struct PSP_LoadingLock {
+	PSP_LoadingLock();
+	~PSP_LoadingLock();
+};
+
+// Call before PSP_BeginHostFrame() in order to not miss any GPU stats.
+void Core_UpdateDebugStats(bool collectStats);
 
 void Audio_Init();
-
-bool IsOnSeparateCPUThread();
+void Audio_Shutdown();
 bool IsAudioInitialised();
 
 void UpdateLoadedFile(FileLoader *fileLoader);
@@ -84,8 +100,7 @@ void InitSysDirectories();
 #endif
 
 // RUNNING must be at 0, NEXTFRAME must be at 1.
-enum CoreState
-{
+enum CoreState {
 	CORE_RUNNING = 0,
 	CORE_NEXTFRAME = 1,
 	CORE_STEPPING,
@@ -93,6 +108,8 @@ enum CoreState
 	CORE_POWERDOWN,
 	CORE_ERROR,
 };
+
+extern bool coreCollectDebugStats;
 
 extern volatile CoreState coreState;
 extern volatile bool coreStatePending;

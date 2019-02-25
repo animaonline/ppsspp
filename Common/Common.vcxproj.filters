@@ -58,9 +58,6 @@
     </ClInclude>
     <ClInclude Include="GraphicsContext.h" />
     <ClInclude Include="DbgNew.h" />
-    <ClInclude Include="Vulkan\SPIRVDisasm.h">
-      <Filter>Vulkan</Filter>
-    </ClInclude>
     <ClInclude Include="Vulkan\VulkanLoader.h">
       <Filter>Vulkan</Filter>
     </ClInclude>
@@ -73,6 +70,9 @@
     <ClInclude Include="Vulkan\VulkanMemory.h">
       <Filter>Vulkan</Filter>
     </ClInclude>
+    <ClInclude Include="OSVersion.h" />
+    <ClInclude Include="Hashmaps.h" />
+    <ClInclude Include="Vulkan\VulkanDebug.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp" />
@@ -81,7 +81,6 @@
     <ClCompile Include="CPUDetect.cpp" />
     <ClCompile Include="FileUtil.cpp" />
     <ClCompile Include="LogManager.cpp" />
-    <ClCompile Include="MemArena.cpp" />
     <ClCompile Include="MemoryUtil.cpp" />
     <ClCompile Include="Misc.cpp" />
     <ClCompile Include="MsgHandler.cpp" />
@@ -104,7 +103,6 @@
       <Filter>Crypto</Filter>
     </ClCompile>
     <ClCompile Include="ChunkFile.cpp" />
-    <ClCompile Include="ArmThunk.cpp" />
     <ClCompile Include="MipsEmitter.cpp" />
     <ClCompile Include="Arm64Emitter.cpp" />
     <ClCompile Include="ColorConv.cpp" />
@@ -118,9 +116,6 @@
     <ClCompile Include="GL\GLInterface\GLInterface.cpp">
       <Filter>GL\GLInterface</Filter>
     </ClCompile>
-    <ClCompile Include="Vulkan\SPIRVDisasm.cpp">
-      <Filter>Vulkan</Filter>
-    </ClCompile>
     <ClCompile Include="Vulkan\VulkanLoader.cpp">
       <Filter>Vulkan</Filter>
     </ClCompile>
@@ -133,9 +128,12 @@
     <ClCompile Include="Vulkan\VulkanMemory.cpp">
       <Filter>Vulkan</Filter>
     </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="CMakeLists.txt" />
+    <ClCompile Include="MemArenaPosix.cpp" />
+    <ClCompile Include="MemArenaWin32.cpp" />
+    <ClCompile Include="MemArenaAndroid.cpp" />
+    <ClCompile Include="MemArenaDarwin.cpp" />
+    <ClCompile Include="OSVersion.cpp" />
+    <ClCompile Include="Vulkan\VulkanDebug.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="Crypto">

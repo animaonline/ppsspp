@@ -16,7 +16,7 @@ void OnScreenMessagesView::Draw(UIContext &dc) {
 
 	// Get height
 	float w, h;
-	dc.MeasureText(dc.theme->uiFont, "Wg", &w, &h);
+	dc.MeasureText(dc.theme->uiFont, 1.0f, 1.0f, "Wg", &w, &h);
 
 	float y = 10.0f;
 	// Then draw them all. 
@@ -27,7 +27,7 @@ void OnScreenMessagesView::Draw(UIContext &dc) {
 		if (alpha < 0.0) alpha = 0.0f;
 		// Messages that are wider than the screen are left-aligned instead of centered.
 		float tw, th;
-		dc.MeasureText(dc.theme->uiFont, iter->text.c_str(), &tw, &th);
+		dc.MeasureText(dc.theme->uiFont, 1.0f, 1.0f, iter->text.c_str(), &tw, &th);
 		float x = bounds_.centerX();
 		int align = ALIGN_TOP | ALIGN_HCENTER;
 		if (tw > bounds_.w) {
@@ -55,7 +55,7 @@ restart:
 
 void OnScreenMessages::Show(const std::string &text, float duration_s, uint32_t color, int icon, bool checkUnique, const char *id) {
 	double now = time_now_d();
-	lock_guard guard(mutex_);
+	std::lock_guard<std::mutex> guard(mutex_);
 	if (checkUnique) {
 		for (auto iter = messages_.begin(); iter != messages_.end(); ++iter) {
 			if (iter->text == text || (id && iter->id && !strcmp(iter->id, id))) {

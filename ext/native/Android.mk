@@ -9,11 +9,11 @@ LOCAL_ARM_MODE := arm
 LOCAL_SRC_FILES :=\
     base/backtrace.cpp \
     base/buffer.cpp \
-    base/compat.cpp \
     base/display.cpp \
     base/timeutil.cpp \
     base/colorutil.cpp \
     base/stringutil.cpp \
+    data/base64.cpp \
     data/compression.cpp \
     ext/rg_etc1/rg_etc1.cpp \
     ext/cityhash/city.cpp \
@@ -36,8 +36,7 @@ LOCAL_SRC_FILES :=\
     ext/jpge/jpgd.cpp \
     ext/jpge/jpge.cpp \
     ext/sha1/sha1.cpp \
-    ext/vjson/json.cpp \
-    ext/vjson/block_allocator.cpp \
+    ext/gason/gason.cpp \
     file/fd_util.cpp \
     file/chunk_file.cpp \
     file/file_util.cpp \
@@ -45,12 +44,14 @@ LOCAL_SRC_FILES :=\
     file/path.cpp \
     file/ini_file.cpp \
     file/zip_read.cpp \
+    json/json_reader.cpp \
     json/json_writer.cpp \
     i18n/i18n.cpp \
     input/gesture_detector.cpp \
     input/input_state.cpp \
     math/fast/fast_math.c \
     math/fast/fast_matrix.c \
+    math/dataconv.cpp \
     math/math_util.cpp \
     math/curves.cpp \
     math/expression_parser.cpp \
@@ -62,7 +63,9 @@ LOCAL_SRC_FILES :=\
     net/http_server.cpp \
     net/http_headers.cpp \
     net/resolve.cpp \
+    net/sinks.cpp \
     net/url.cpp \
+    net/websocket_server.cpp \
     profiler/profiler.cpp \
     thread/executor.cpp \
     thread/threadutil.cpp \
@@ -73,8 +76,8 @@ LOCAL_SRC_FILES :=\
     gfx_es2/gl3stub.c \
     gfx_es2/draw_buffer.cpp.arm \
     gfx_es2/draw_text.cpp.arm \
+    gfx_es2/draw_text_android.cpp.arm \
     gfx/gl_debug_log.cpp \
-    gfx/gl_lost_manager.cpp \
     gfx/texture_atlas.cpp \
     image/zim_load.cpp \
     image/zim_save.cpp \
@@ -82,15 +85,21 @@ LOCAL_SRC_FILES :=\
     thin3d/thin3d.cpp \
     thin3d/thin3d_gl.cpp \
     thin3d/thin3d_vulkan.cpp \
+    thin3d/GLRenderManager.cpp \
+    thin3d/GLQueueRunner.cpp \
+    thin3d/VulkanRenderManager.cpp \
+    thin3d/VulkanQueueRunner.cpp \
+    thin3d/DataFormatGL.cpp \
     ui/view.cpp \
     ui/viewgroup.cpp \
     ui/ui.cpp \
     ui/ui_screen.cpp \
+    ui/ui_tween.cpp \
     ui/ui_context.cpp \
     ui/screen.cpp \
-    ui/virtual_input.cpp \
     util/text/utf8.cpp \
     util/text/parsers.cpp \
+    util/text/wrap_text.cpp \
     util/hash/hash.cpp
 
 LOCAL_CFLAGS := -O3 -DUSING_GLES2 -fsigned-char -fno-strict-aliasing -Wall -Wno-multichar -D__STDC_CONSTANT_MACROS

@@ -15,8 +15,10 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "stdafx.h"
 #include <limits.h>
 #include <algorithm>
+#include <mmsystem.h>
 
 #include "Core/HLE/sceCtrl.h"
 #include "DinputDevice.h"
@@ -37,6 +39,7 @@
 unsigned int                  DinputDevice::pInstances = 0;
 LPDIRECTINPUT8                DinputDevice::pDI = NULL;
 std::vector<DIDEVICEINSTANCE> DinputDevice::devices;
+bool DinputDevice::needsCheck_ = true;
 
 // In order from 0.  There can be 128, but most controllers do not have that many.
 static const int dinput_buttons[] = {
@@ -116,9 +119,9 @@ BOOL CALLBACK DinputDevice::DevicesCallback(
 	return DIENUM_CONTINUE;
 }
 
-void DinputDevice::getDevices()
+void DinputDevice::getDevices(bool refresh)
 {
-	if (devices.empty())
+	if (refresh)
 	{
 		getPDI()->EnumDevices(DI8DEVCLASS_GAMECTRL, &DinputDevice::DevicesCallback, NULL, DIEDFL_ATTACHEDONLY);
 	}
@@ -147,7 +150,7 @@ DinputDevice::DinputDevice(int devnum) {
 		return;
 	}
 
-	getDevices();
+	getDevices(false);
 	if ( (devnum >= (int)devices.size()) || FAILED(getPDI()->CreateDevice(devices.at(devnum).guidInstance, &pJoystick, NULL)))
 	{
 		return;
@@ -221,7 +224,7 @@ inline float LinearMaps(short val, short a0, short a1, short b0, short b1) {
 	return b0 + (((val - a0) * (b1 - b0)) / (a1 - a0));
 }
 
-int DinputDevice::UpdateState(InputState &input_state) {
+int DinputDevice::UpdateState() {
 	if (!pJoystick) return -1;
 
 	DIJOYSTATE2 js;
@@ -234,7 +237,7 @@ int DinputDevice::UpdateState(InputState &input_state) {
 	if(FAILED(pJoystick->GetDeviceState(sizeof(DIJOYSTATE2), &js)))
 		return -1;
 
-	ApplyButtons(js, input_state);
+	ApplyButtons(js);
 
 	if (analog)	{
 		AxisInput axis;
@@ -308,7 +311,7 @@ int DinputDevice::UpdateState(InputState &input_state) {
 	return -1;
 }
 
-void DinputDevice::ApplyButtons(DIJOYSTATE2 &state, InputState &input_state) {
+void DinputDevice::ApplyButtons(DIJOYSTATE2 &state) {
 	BYTE *buttons = state.rgbButtons;
 	u32 downMask = 0x80;
 
@@ -366,9 +369,7 @@ void DinputDevice::ApplyButtons(DIJOYSTATE2 &state, InputState &input_state) {
 
 size_t DinputDevice::getNumPads()
 {
-	if (devices.empty())
-	{
-		getDevices();
-	}
+	getDevices(needsCheck_);
+	needsCheck_ = false;
 	return devices.size();
 }

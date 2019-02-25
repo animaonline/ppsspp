@@ -15,6 +15,8 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include "ppsspp_config.h"
+
 #include <algorithm>
 
 // For shell links
@@ -24,27 +26,35 @@
 #include "objbase.h"
 #include "objidl.h"
 #include "shlguid.h"
+#pragma warning(push)
 #pragma warning(disable:4091)  // workaround bug in VS2015 headers
 #include "shlobj.h"
+#pragma warning(pop)
 
 // native stuff
+#include "base/display.h"
 #include "base/NativeApp.h"
 #include "file/file_util.h"
 #include "input/input_state.h"
 #include "input/keycodes.h"
 #include "util/text/utf8.h"
 
+#include "Common/StringUtils.h"
 #include "Core/Core.h"
 #include "Core/Config.h"
+#include "Core/ConfigValues.h"
 #include "Core/CoreParameter.h"
 #include "Core/System.h"
+#include "Core/Debugger/SymbolMap.h"
 #include "Windows/EmuThread.h"
-#include "Windows/DSoundStream.h"
+#include "Windows/WindowsAudio.h"
 #include "Windows/WindowsHost.h"
 #include "Windows/MainWindow.h"
+
 #include "Windows/GPU/WindowsGLContext.h"
 #include "Windows/GPU/WindowsVulkanContext.h"
 #include "Windows/GPU/D3D9Context.h"
+#include "Windows/GPU/D3D11Context.h"
 
 #include "Windows/Debugger/DebuggerShared.h"
 #include "Windows/Debugger/Debugger_Disasm.h"
@@ -54,33 +64,31 @@
 #include "Windows/XinputDevice.h"
 #include "Windows/KeyboardDevice.h"
 
-#include "Core/Debugger/SymbolMap.h"
-
-#include "Common/StringUtils.h"
 #include "Windows/main.h"
+#include "UI/OnScreenDisplay.h"
 
 static const int numCPUs = 1;
 
-float mouseDeltaX = 0;
-float mouseDeltaY = 0;
+float g_mouseDeltaX = 0;
+float g_mouseDeltaY = 0;
 
 static BOOL PostDialogMessage(Dialog *dialog, UINT message, WPARAM wParam = 0, LPARAM lParam = 0) {
 	return PostMessage(dialog->GetDlgHandle(), message, wParam, lParam);
 }
 
 WindowsHost::WindowsHost(HINSTANCE hInstance, HWND mainWindow, HWND displayWindow)
-	: gfx_(nullptr), hInstance_(hInstance),
+	: hInstance_(hInstance),
 		mainWindow_(mainWindow),
 		displayWindow_(displayWindow)
 {
-	mouseDeltaX = 0;
-	mouseDeltaY = 0;
+	g_mouseDeltaX = 0;
+	g_mouseDeltaY = 0;
 
 	//add first XInput device to respond
 	input.push_back(std::shared_ptr<InputDevice>(new XinputDevice()));
 	//find all connected DInput devices of class GamePad
-	size_t numDInputDevs = DinputDevice::getNumPads();
-	for (size_t i = 0; i < numDInputDevs; i++) {
+	numDinputDevices_ = DinputDevice::getNumPads();
+	for (size_t i = 0; i < numDinputDevices_; i++) {
 		input.push_back(std::shared_ptr<InputDevice>(new DinputDevice(static_cast<int>(i))));
 	}
 	keyboard = std::shared_ptr<KeyboardDevice>(new KeyboardDevice());
@@ -107,13 +115,16 @@ void WindowsHost::UpdateConsolePosition() {
 bool WindowsHost::InitGraphics(std::string *error_message, GraphicsContext **ctx) {
 	WindowsGraphicsContext *graphicsContext = nullptr;
 	switch (g_Config.iGPUBackend) {
-	case GPU_BACKEND_OPENGL:
+	case (int)GPUBackend::OPENGL:
 		graphicsContext = new WindowsGLContext();
 		break;
-	case GPU_BACKEND_DIRECT3D9:
+	case (int)GPUBackend::DIRECT3D9:
 		graphicsContext = new D3D9Context();
 		break;
-	case GPU_BACKEND_VULKAN:
+	case (int)GPUBackend::DIRECT3D11:
+		graphicsContext = new D3D11Context();
+		break;
+	case (int)GPUBackend::VULKAN:
 		graphicsContext = new WindowsVulkanContext();
 		break;
 	default:
@@ -136,15 +147,22 @@ void WindowsHost::ShutdownGraphics() {
 	gfx_->Shutdown();
 	delete gfx_;
 	gfx_ = nullptr;
-	PostMessage(mainWindow_, WM_CLOSE, 0, 0);
 }
 
 void WindowsHost::SetWindowTitle(const char *message) {
-	std::wstring winTitle = ConvertUTF8ToWString(std::string("PPSSPP ") + PPSSPP_GIT_VERSION);
+#ifdef GOLD
+	const char *name = "PPSSPP Gold ";
+#else
+	const char *name = "PPSSPP ";
+#endif
+	std::wstring winTitle = ConvertUTF8ToWString(std::string(name) + PPSSPP_GIT_VERSION);
 	if (message != nullptr) {
 		winTitle.append(ConvertUTF8ToWString(" - "));
 		winTitle.append(ConvertUTF8ToWString(message));
 	}
+#ifdef _DEBUG
+	winTitle.append(L" (debug)");
+#endif
 
 	MainWindow::SetWindowTitle(winTitle.c_str());
 	PostMessage(mainWindow_, MainWindow::WM_USER_WINDOW_TITLE_CHANGED, 0, 0);
@@ -186,45 +204,63 @@ void WindowsHost::SetDebugMode(bool mode) {
 			PostDialogMessage(disasmWindow[i], WM_DEB_SETDEBUGLPARAM, 0, (LPARAM)mode);
 }
 
-void WindowsHost::PollControllers(InputState &input_state) {
+void WindowsHost::PollControllers() {
+	static int checkCounter = 0;
+	static const int CHECK_FREQUENCY = 71;
+	if (checkCounter++ > CHECK_FREQUENCY) {
+		size_t newCount = DinputDevice::getNumPads();
+		if (newCount > numDinputDevices_) {
+			INFO_LOG(SYSTEM, "New controller device detected");
+			for (size_t i = numDinputDevices_; i < newCount; i++) {
+				input.push_back(std::shared_ptr<InputDevice>(new DinputDevice(static_cast<int>(i))));
+			}
+			numDinputDevices_ = newCount;
+		}
+
+		checkCounter = 0;
+	}
+
 	bool doPad = true;
-	for (auto iter = this->input.begin(); iter != this->input.end(); iter++)
-	{
-		auto device = *iter;
+	for (const auto &device : input) {
 		if (!doPad && device->IsPad())
 			continue;
-		if (device->UpdateState(input_state) == InputDevice::UPDATESTATE_SKIP_PAD)
+		if (device->UpdateState() == InputDevice::UPDATESTATE_SKIP_PAD)
 			doPad = false;
 	}
 
-	mouseDeltaX *= 0.9f;
-	mouseDeltaY *= 0.9f;
+	// Disabled by default, needs a workaround to map to psp keys.
+	if (g_Config.bMouseControl) {
+		float scaleFactor_x = g_dpi_scale_x * 0.1 * g_Config.fMouseSensitivity;
+		float scaleFactor_y = g_dpi_scale_y * 0.1 * g_Config.fMouseSensitivity;
 
-	// TODO: Tweak!
-	float mx = std::max(-1.0f, std::min(1.0f, mouseDeltaX * 0.01f));
-	float my = std::max(-1.0f, std::min(1.0f, mouseDeltaY * 0.01f));
-	AxisInput axisX, axisY;
-	axisX.axisId = JOYSTICK_AXIS_MOUSE_REL_X;
-	axisX.deviceId = DEVICE_ID_MOUSE;
-	axisX.value = mx;
-	axisY.axisId = JOYSTICK_AXIS_MOUSE_REL_Y;
-	axisY.deviceId = DEVICE_ID_MOUSE;
-	axisY.value = my;
+		float mx = std::max(-1.0f, std::min(1.0f, g_mouseDeltaX * scaleFactor_x));
+		float my = std::max(-1.0f, std::min(1.0f, g_mouseDeltaY * scaleFactor_y));
+		AxisInput axisX, axisY;
+		axisX.axisId = JOYSTICK_AXIS_MOUSE_REL_X;
+		axisX.deviceId = DEVICE_ID_MOUSE;
+		axisX.value = mx;
+		axisY.axisId = JOYSTICK_AXIS_MOUSE_REL_Y;
+		axisY.deviceId = DEVICE_ID_MOUSE;
+		axisY.value = my;
 
-	// Disabled for now as it makes the mapping dialog unusable!
-	//if (fabsf(mx) > 0.1f) NativeAxis(axisX);
-	//if (fabsf(my) > 0.1f) NativeAxis(axisY);
+		if (GetUIState() == UISTATE_INGAME || g_Config.bMapMouse) {
+			if (fabsf(mx) > 0.01f) NativeAxis(axisX);
+			if (fabsf(my) > 0.01f) NativeAxis(axisY);
+		}
+	}
+
+	g_mouseDeltaX *= g_Config.fMouseSmoothing;
+	g_mouseDeltaY *= g_Config.fMouseSmoothing;
 }
 
 void WindowsHost::BootDone() {
 	g_symbolMap->SortSymbols();
-	SendMessage(mainWindow_, WM_USER + 1, 0, 0);
+	PostMessage(mainWindow_, WM_USER + 1, 0, 0);
 
 	SetDebugMode(!g_Config.bAutoRun);
-	Core_EnableStepping(!g_Config.bAutoRun);
 }
 
-static std::string SymbolMapFilename(const char *currentFilename, char* ext) {
+static std::string SymbolMapFilename(const char *currentFilename, const char* ext) {
 	FileInfo info;
 
 	std::string result = currentFilename;
@@ -233,9 +269,9 @@ static std::string SymbolMapFilename(const char *currentFilename, char* ext) {
 	getFileInfo(currentFilename, &info);
 	if (info.isDirectory) {
 #ifdef _WIN32
-		char* slash = "\\";
+		const char* slash = "\\";
 #else
-		char* slash = "/";
+		const char* slash = "/";
 #endif
 		if (!endsWith(result,slash))
 			result += slash;
@@ -341,10 +377,14 @@ bool WindowsHost::CreateDesktopShortcut(std::string argumentPath, std::string ga
 	return false;
 }
 
-void WindowsHost::GoFullscreen(bool viewFullscreen) {
-	MainWindow::SendToggleFullscreen(viewFullscreen);
-}
-
 void WindowsHost::ToggleDebugConsoleVisibility() {
 	MainWindow::ToggleDebugConsoleVisibility();
+}
+
+void WindowsHost::NotifyUserMessage(const std::string &message, float duration, u32 color, const char *id) {
+	osm.Show(message, duration, color, -1, true, id);
+}
+
+void WindowsHost::SendUIMessage(const std::string &message, const std::string &value) {
+	NativeMessageReceived(message.c_str(), value.c_str());
 }

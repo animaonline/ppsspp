@@ -18,11 +18,14 @@
 #include <algorithm>
 #include <cstddef>
 #include <set>
-#include <string.h>
+#include <mutex>
+#include <cstring>
+
 #include "file/file_util.h"
 #include "file/free.h"
 #include "util/text/utf8.h"
 #include "Common/FileUtil.h"
+#include "Common/CommonWindows.h"
 #include "Core/FileLoaders/DiskCachingFileLoader.h"
 #include "Core/System.h"
 
@@ -34,66 +37,76 @@ static const u32 CACHE_SPACE_FLEX = 4;
 std::string DiskCachingFileLoaderCache::cacheDir_;
 
 std::map<std::string, DiskCachingFileLoaderCache *> DiskCachingFileLoader::caches_;
-recursive_mutex DiskCachingFileLoader::cachesMutex_;
+std::mutex DiskCachingFileLoader::cachesMutex_;
 
 // Takes ownership of backend.
 DiskCachingFileLoader::DiskCachingFileLoader(FileLoader *backend)
-	: filesize_(0), filepos_(0), backend_(backend), cache_(nullptr) {
-	filesize_ = backend->FileSize();
-	if (filesize_ > 0) {
-		InitCache();
-	}
+	: ProxiedFileLoader(backend) {
+}
+
+void DiskCachingFileLoader::Prepare() {
+	std::call_once(preparedFlag_, [this]() {
+		filesize_ = ProxiedFileLoader::FileSize();
+		if (filesize_ > 0) {
+			InitCache();
+		}
+	});
 }
 
 DiskCachingFileLoader::~DiskCachingFileLoader() {
 	if (filesize_ > 0) {
 		ShutdownCache();
 	}
-	// Takes ownership.
-	delete backend_;
 }
 
 bool DiskCachingFileLoader::Exists() {
-	return backend_->Exists();
+	Prepare();
+	return ProxiedFileLoader::Exists();
 }
 
-bool DiskCachingFileLoader::IsDirectory() {
-	return backend_->IsDirectory() ? 1 : 0;
+bool DiskCachingFileLoader::ExistsFast() {
+	// It may require a slow operation to check - if we have data, let's say yes.
+	// This helps initial load, since we check each recent file for existence.
+	return true;
 }
 
 s64 DiskCachingFileLoader::FileSize() {
+	Prepare();
 	return filesize_;
 }
 
-std::string DiskCachingFileLoader::Path() const {
-	return backend_->Path();
-}
-
-void DiskCachingFileLoader::Seek(s64 absolutePos) {
-	filepos_ = absolutePos;
-}
-
-size_t DiskCachingFileLoader::ReadAt(s64 absolutePos, size_t bytes, void *data) {
+size_t DiskCachingFileLoader::ReadAt(s64 absolutePos, size_t bytes, void *data, Flags flags) {
+	Prepare();
 	size_t readSize;
 
-	if (cache_ && cache_->IsValid()) {
+	if (absolutePos >= filesize_) {
+		bytes = 0;
+	} else if (absolutePos + (s64)bytes >= filesize_) {
+		bytes = filesize_ - absolutePos;
+	}
+
+	if (cache_ && cache_->IsValid() && (flags & Flags::HINT_UNCACHED) == 0) {
 		readSize = cache_->ReadFromCache(absolutePos, bytes, data);
 		// While in case the cache size is too small for the entire read.
 		while (readSize < bytes) {
-			readSize += cache_->SaveIntoCache(backend_, absolutePos + readSize, bytes - readSize, (u8 *)data + readSize);
+			readSize += cache_->SaveIntoCache(backend_, absolutePos + readSize, bytes - readSize, (u8 *)data + readSize, flags);
 			// If there are already-cached blocks afterward, we have to read them.
-			readSize += cache_->ReadFromCache(absolutePos + readSize, bytes - readSize, (u8 *)data + readSize);
+			size_t bytesFromCache = cache_->ReadFromCache(absolutePos + readSize, bytes - readSize, (u8 *)data + readSize);
+			readSize += bytesFromCache;
+			if (bytesFromCache == 0) {
+				// We can't read any more.
+				break;
+			}
 		}
 	} else {
-		readSize = backend_->ReadAt(absolutePos, bytes, data);
+		readSize = backend_->ReadAt(absolutePos, bytes, data, flags);
 	}
 
-	filepos_ = absolutePos + readSize;
 	return readSize;
 }
 
 std::vector<std::string> DiskCachingFileLoader::GetCachedPathsInUse() {
-	lock_guard guard(cachesMutex_);
+	std::lock_guard<std::mutex> guard(cachesMutex_);
 
 	// This is on the file loader so that it can manage the caches_.
 	std::vector<std::string> files;
@@ -106,9 +119,9 @@ std::vector<std::string> DiskCachingFileLoader::GetCachedPathsInUse() {
 }
 
 void DiskCachingFileLoader::InitCache() {
-	lock_guard guard(cachesMutex_);
+	std::lock_guard<std::mutex> guard(cachesMutex_);
 
-	std::string path = backend_->Path();
+	std::string path = ProxiedFileLoader::Path();
 	auto &entry = caches_[path];
 	if (!entry) {
 		entry = new DiskCachingFileLoaderCache(path, filesize_);
@@ -119,18 +132,18 @@ void DiskCachingFileLoader::InitCache() {
 }
 
 void DiskCachingFileLoader::ShutdownCache() {
-	lock_guard guard(cachesMutex_);
+	std::lock_guard<std::mutex> guard(cachesMutex_);
 
 	if (cache_->Release()) {
 		// If it ran out of counts, delete it.
 		delete cache_;
-		caches_.erase(backend_->Path());
+		caches_.erase(ProxiedFileLoader::Path());
 	}
 	cache_ = nullptr;
 }
 
 DiskCachingFileLoaderCache::DiskCachingFileLoaderCache(const std::string &path, u64 filesize)
-	: refCount_(0), filesize_(filesize), origPath_(path), f_(nullptr), fd_(0) {
+	: filesize_(filesize), origPath_(path) {
 	InitCache(path);
 }
 
@@ -194,7 +207,7 @@ void DiskCachingFileLoaderCache::ShutdownCache() {
 }
 
 size_t DiskCachingFileLoaderCache::ReadFromCache(s64 pos, size_t bytes, void *data) {
-	lock_guard guard(lock_);
+	std::lock_guard<std::mutex> guard(lock_);
 
 	if (!f_) {
 		return 0;
@@ -228,12 +241,12 @@ size_t DiskCachingFileLoaderCache::ReadFromCache(s64 pos, size_t bytes, void *da
 	return readSize;
 }
 
-size_t DiskCachingFileLoaderCache::SaveIntoCache(FileLoader *backend, s64 pos, size_t bytes, void *data) {
-	lock_guard guard(lock_);
+size_t DiskCachingFileLoaderCache::SaveIntoCache(FileLoader *backend, s64 pos, size_t bytes, void *data, FileLoader::Flags flags) {
+	std::lock_guard<std::mutex> guard(lock_);
 
 	if (!f_) {
 		// Just to keep things working.
-		return backend->ReadAt(pos, bytes, data);
+		return backend->ReadAt(pos, bytes, data, flags);
 	}
 
 	s64 cacheStartPos = pos / blockSize_;
@@ -262,7 +275,7 @@ size_t DiskCachingFileLoaderCache::SaveIntoCache(FileLoader *backend, s64 pos, s
 		auto &info = index_[cacheStartPos];
 
 		u8 *buf = new u8[blockSize_];
-		size_t readBytes = backend->ReadAt(cacheStartPos * (u64)blockSize_, blockSize_, buf);
+		size_t readBytes = backend->ReadAt(cacheStartPos * (u64)blockSize_, blockSize_, buf, flags);
 
 		// Check if it was written while we were busy.  Might happen if we thread.
 		if (info.block == INVALID_BLOCK && readBytes != 0) {
@@ -278,7 +291,7 @@ size_t DiskCachingFileLoaderCache::SaveIntoCache(FileLoader *backend, s64 pos, s
 		delete [] buf;
 	} else {
 		u8 *wholeRead = new u8[blocksToRead * blockSize_];
-		size_t readBytes = backend->ReadAt(cacheStartPos * (u64)blockSize_, blocksToRead * blockSize_, wholeRead);
+		size_t readBytes = backend->ReadAt(cacheStartPos * (u64)blockSize_, blocksToRead * blockSize_, wholeRead, flags);
 
 		for (size_t i = 0; i < blocksToRead; ++i) {
 			auto &info = index_[cacheStartPos + i];
@@ -427,7 +440,7 @@ bool DiskCachingFileLoaderCache::ReadBlockData(u8 *dest, BlockInfo &info, size_t
 	fflush(f_);
 
 	bool failed = false;
-#ifdef ANDROID
+#ifdef __ANDROID__
 	if (lseek64(fd_, blockOffset, SEEK_SET) != blockOffset) {
 		failed = true;
 	} else if (read(fd_, dest + offset, size) != (ssize_t)size) {
@@ -455,7 +468,7 @@ void DiskCachingFileLoaderCache::WriteBlockData(BlockInfo &info, u8 *src) {
 	s64 blockOffset = GetBlockOffset(info.block);
 
 	bool failed = false;
-#ifdef ANDROID
+#ifdef __ANDROID__
 	if (lseek64(fd_, blockOffset, SEEK_SET) != blockOffset) {
 		failed = true;
 	} else if (write(fd_, src, blockSize_) != (ssize_t)blockSize_) {
@@ -520,7 +533,7 @@ bool DiskCachingFileLoaderCache::LoadCacheFile(const std::string &path) {
 	if (valid) {
 		f_ = fp;
 
-#ifdef ANDROID
+#ifdef __ANDROID__
 		// Android NDK does not support 64-bit file I/O using C streams
 		fd_ = fileno(f_);
 #endif
@@ -598,7 +611,7 @@ void DiskCachingFileLoaderCache::CreateCacheFile(const std::string &path) {
 		ERROR_LOG(LOADER, "Could not create disk cache file");
 		return;
 	}
-#ifdef ANDROID
+#ifdef __ANDROID__
 	// Android NDK does not support 64-bit file I/O using C streams
 	fd_ = fileno(f_);
 #endif
@@ -705,6 +718,19 @@ void DiskCachingFileLoaderCache::CloseFileHandle() {
 	}
 	f_ = nullptr;
 	fd_ = 0;
+}
+
+bool DiskCachingFileLoaderCache::HasData() const {
+	if (!f_) {
+		return false;
+	}
+
+	for (size_t i = 0; i < blockIndexLookup_.size(); ++i) {
+		if (blockIndexLookup_[i] != INVALID_INDEX) {
+			return true;
+		}
+	}
+	return false;
 }
 
 u64 DiskCachingFileLoaderCache::FreeDiskSpace() {

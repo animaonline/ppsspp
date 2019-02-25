@@ -18,38 +18,34 @@
 #pragma once
 
 #include <vector>
-#include "base/mutex.h"
+#include <mutex>
+
 #include "Common/CommonTypes.h"
 #include "Core/Loaders.h"
 
-class RamCachingFileLoader : public FileLoader {
+class RamCachingFileLoader : public ProxiedFileLoader {
 public:
 	RamCachingFileLoader(FileLoader *backend);
 	~RamCachingFileLoader() override;
 
 	bool Exists() override;
+	bool ExistsFast() override;
 	bool IsDirectory() override;
 	s64 FileSize() override;
-	std::string Path() const override;
 
-	void Seek(s64 absolutePos) override;
-	size_t Read(size_t bytes, size_t count, void *data) override {
-		return ReadAt(filepos_, bytes, count, data);
+	size_t ReadAt(s64 absolutePos, size_t bytes, size_t count, void *data, Flags flags = Flags::NONE) override {
+		return ReadAt(absolutePos, bytes * count, data, flags) / bytes;
 	}
-	size_t Read(size_t bytes, void *data) override {
-		return ReadAt(filepos_, bytes, data);
-	}
-	size_t ReadAt(s64 absolutePos, size_t bytes, size_t count, void *data) override {
-		return ReadAt(absolutePos, bytes * count, data) / bytes;
-	}
-	size_t ReadAt(s64 absolutePos, size_t bytes, void *data) override;
+	size_t ReadAt(s64 absolutePos, size_t bytes, void *data, Flags flags = Flags::NONE) override;
+
+	void Cancel() override;
 
 private:
 	void InitCache();
 	void ShutdownCache();
 	size_t ReadFromCache(s64 pos, size_t bytes, void *data);
 	// Guaranteed to read at least one block into the cache.
-	void SaveIntoCache(s64 pos, size_t bytes);
+	void SaveIntoCache(s64 pos, size_t bytes, Flags flags);
 	void StartReadAhead(s64 pos);
 	u32 NextAheadBlock();
 
@@ -60,17 +56,15 @@ private:
 		BLOCK_READAHEAD = 4,
 	};
 
-	s64 filesize_;
-	s64 filepos_;
-	FileLoader *backend_;
-	u8 *cache_;
-	int exists_;
-	int isDirectory_;
+	s64 filesize_ = 0;
+	u8 *cache_ = nullptr;
+	int exists_ = -1;
+	int isDirectory_ = -1;
 
 	std::vector<u8> blocks_;
-	recursive_mutex blocksMutex_;
-	mutable recursive_mutex backendMutex_;
+	std::mutex blocksMutex_;
 	u32 aheadRemaining_;
 	s64 aheadPos_;
-	bool aheadThread_;
+	bool aheadThread_ = false;
+	bool aheadCancel_ = false;
 };

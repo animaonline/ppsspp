@@ -15,7 +15,8 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include "base/functional.h"
+#include <functional>
+
 #include "ui/view.h"
 #include "ui/ui_screen.h"
 #include "ui/ui_context.h"
@@ -26,6 +27,7 @@ extern std::string gameTitle;
 
 class CwCheatScreen : public UIDialogScreenWithBackground {
 public:
+	CwCheatScreen(std::string gamePath);
 	CwCheatScreen() {}
 	void CreateCodeList();
 	void processFileOn(std::string activatedCheat);
@@ -37,9 +39,9 @@ public:
 	UI::EventReturn OnEditCheatFile(UI::EventParams &params);
 	UI::EventReturn OnEnableAll(UI::EventParams &params);
 
-	virtual void onFinish(DialogResult result);
+	void onFinish(DialogResult result) override;
 protected:
-	virtual void CreateViews();
+	void CreateViews() override;
 
 private:
 	UI::EventReturn OnCheckBox(UI::EventParams &params);

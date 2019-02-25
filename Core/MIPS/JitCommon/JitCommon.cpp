@@ -15,38 +15,73 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include <stdlib.h>
-
-#include "Core/MIPS/JitCommon/JitCommon.h"
-#include "Core/MIPS/JitCommon/NativeJit.h"
-#include "Common/StringUtils.h"
+#include <cstdlib>
 
 #include "ext/disarm.h"
 #include "ext/udis86/udis86.h"
-#include "Core/Util/DisArm64.h"
 
-#if (defined(_M_IX86) || defined(_M_X64)) && defined(_WIN32)
-#define DISASM_ALL 1
+#include "Common/StringUtils.h"
+#include "Common/ChunkFile.h"
+
+#include "Core/Util/DisArm64.h"
+#include "Core/Config.h"
+
+#include "Core/MIPS/JitCommon/JitCommon.h"
+#include "Core/MIPS/JitCommon/JitState.h"
+#include "Core/MIPS/IR/IRJit.h"
+
+#if PPSSPP_ARCH(ARM)
+#include "../ARM/ArmJit.h"
+#elif PPSSPP_ARCH(ARM64)
+#include "../ARM64/Arm64Jit.h"
+#elif PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)
+#include "../x86/Jit.h"
+#elif PPSSPP_ARCH(MIPS)
+#include "../MIPS/MipsJit.h"
+#else
+#include "../fake/FakeJit.h"
 #endif
 
 namespace MIPSComp {
-#if defined(ARM)
-	ArmJit *jit;
-#elif defined(ARM64)
-	Arm64Jit *jit;
-#elif defined(_M_IX86) || defined(_M_X64)
-	Jit *jit;
-#elif defined(MIPS)
-	MipsJit *jit;
-#else
-	FakeJit *jit;
-#endif
+	JitInterface *jit;
 	void JitAt() {
 		jit->Compile(currentMIPS->pc);
 	}
-}
 
-#if defined(ARM) || defined(DISASM_ALL)
+	void DoDummyJitState(PointerWrap &p) {
+		// This is here so the savestate matches between jit and non-jit.
+		auto s = p.Section("Jit", 1, 2);
+		if (!s)
+			return;
+
+		bool dummy = false;
+		p.Do(dummy);
+		if (s >= 2) {
+			dummy = true;
+			p.Do(dummy);
+		}
+	}
+
+	JitInterface *CreateNativeJit(MIPSState *mips) {
+#if PPSSPP_ARCH(ARM)
+		return new MIPSComp::ArmJit(mips);
+#elif PPSSPP_ARCH(ARM64)
+		return new MIPSComp::Arm64Jit(mips);
+#elif PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)
+		return new MIPSComp::Jit(mips);
+#elif PPSSPP_ARCH(MIPS)
+		return new MIPSComp::MipsJit(mips);
+#else
+		return new MIPSComp::FakeJit(mips);
+#endif
+	}
+
+}
+#if PPSSPP_PLATFORM(WINDOWS)
+#define DISASM_ALL 1
+#endif
+
+#if PPSSPP_ARCH(ARM) || defined(DISASM_ALL)
 // We compile this for x86 as well because it may be useful when developing the ARM JIT on a PC.
 std::vector<std::string> DisassembleArm2(const u8 *data, int size) {
 	std::vector<std::string> lines;
@@ -76,14 +111,14 @@ std::vector<std::string> DisassembleArm2(const u8 *data, int size) {
 			bkpt_count++;
 		} else {
 			if (bkpt_count) {
-				lines.push_back(StringFromFormat("BKPT 1 (x%i)", bkpt_count));
+				lines.push_back(StringFromFormat("BKPT 1 (x%d)", bkpt_count));
 				bkpt_count = 0;
 			}
 			lines.push_back(buf);
 		}
 	}
 	if (bkpt_count) {
-		lines.push_back(StringFromFormat("BKPT 1 (x%i)", bkpt_count));
+		lines.push_back(StringFromFormat("BKPT 1 (x%d)", bkpt_count));
 	}
 	return lines;
 }
@@ -95,7 +130,7 @@ std::string AddAddress(const std::string &buf, uint64_t addr) {
 	return std::string(buf2) + " " + buf;
 }
 
-#if defined(ARM64) || defined(DISASM_ALL)
+#if PPSSPP_ARCH(ARM64) || defined(DISASM_ALL)
 
 static bool Arm64SymbolCallback(char *buffer, int bufsize, uint8_t *address) {
 	if (MIPSComp::jit) {
@@ -138,7 +173,7 @@ std::vector<std::string> DisassembleArm64(const u8 *data, int size) {
 			bkpt_count++;
 		} else {
 			if (bkpt_count) {
-				lines.push_back(StringFromFormat("BKPT 1 (x%i)", bkpt_count));
+				lines.push_back(StringFromFormat("BKPT 1 (x%d)", bkpt_count));
 				bkpt_count = 0;
 			}
 			if (true) {
@@ -148,13 +183,13 @@ std::vector<std::string> DisassembleArm64(const u8 *data, int size) {
 		}
 	}
 	if (bkpt_count) {
-		lines.push_back(StringFromFormat("BKPT 1 (x%i)", bkpt_count));
+		lines.push_back(StringFromFormat("BKPT 1 (x%d)", bkpt_count));
 	}
 	return lines;
 }
 #endif
 
-#if defined(_M_IX86) || defined(_M_X64)
+#if PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)
 
 const char *ppsspp_resolver(struct ud*,
 	uint64_t addr,
@@ -201,11 +236,7 @@ std::vector<std::string> DisassembleX86(const u8 *data, int size) {
 	std::vector<std::string> lines;
 	ud_t ud_obj;
 	ud_init(&ud_obj);
-#ifdef _M_X64
-	ud_set_mode(&ud_obj, 64);
-#else
-	ud_set_mode(&ud_obj, 32);
-#endif
+	ud_set_mode(&ud_obj, sizeof(void*) * 8);
 	ud_set_pc(&ud_obj, (intptr_t)data);
 	ud_set_vendor(&ud_obj, UD_VENDOR_ANY);
 	ud_set_syntax(&ud_obj, UD_SYN_INTEL);
@@ -220,14 +251,14 @@ std::vector<std::string> DisassembleX86(const u8 *data, int size) {
 			int3_count++;
 		} else {
 			if (int3_count) {
-				lines.push_back(StringFromFormat("int3 (x%i)", int3_count));
+				lines.push_back(StringFromFormat("int3 (x%d)", int3_count));
 				int3_count = 0;
 			}
 			lines.push_back(str);
 		}
 	}
 	if (int3_count) {
-		lines.push_back(StringFromFormat("int3 (x%i)", int3_count));
+		lines.push_back(StringFromFormat("int3 (x%d)", int3_count));
 	}
 	return lines;
 }

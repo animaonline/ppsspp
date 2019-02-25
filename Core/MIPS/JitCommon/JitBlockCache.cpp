@@ -42,11 +42,7 @@
 
 #include "Core/MIPS/JitCommon/JitBlockCache.h"
 #include "Core/MIPS/JitCommon/JitCommon.h"
-#include "Core/MIPS/JitCommon/NativeJit.h"
 
-#if defined(_M_IX86) || defined(_M_X64)
-#include "Common/x64Analyzer.h"
-#endif
 // #include "JitBase.h"
 
 #if defined USE_OPROFILE && USE_OPROFILE
@@ -61,20 +57,10 @@ op_agent_t agent;
 #pragma comment(lib, "jitprofiling.lib")
 #endif
 
-#ifdef ARM
-using namespace ArmGen;
-using namespace ArmJitConstants;
-#elif defined(_M_X64) || defined(_M_IX86)
-using namespace Gen;
-#elif defined(ARM64)
-using namespace Arm64Gen;
-using namespace Arm64JitConstants;
-#endif
-
 const u32 INVALID_EXIT = 0xFFFFFFFF;
 
-JitBlockCache::JitBlockCache(MIPSState *mips, NativeCodeBlock *codeBlock) :
-	mips_(mips), codeBlock_(codeBlock), blocks_(0), num_blocks_(0) {
+JitBlockCache::JitBlockCache(MIPSState *mips, CodeBlockCommon *codeBlock) :
+	codeBlock_(codeBlock), blocks_(nullptr), num_blocks_(0) {
 }
 
 JitBlockCache::~JitBlockCache() {
@@ -119,7 +105,7 @@ void JitBlockCache::Clear() {
 	block_map_.clear();
 	proxyBlockMap_.clear();
 	for (int i = 0; i < num_blocks_; i++)
-		DestroyBlock(i, false);
+		DestroyBlock(i, DestroyType::CLEAR);
 	links_to_.clear();
 	num_blocks_ = 0;
 
@@ -134,6 +120,10 @@ void JitBlockCache::Reset() {
 }
 
 JitBlock *JitBlockCache::GetBlock(int no) {
+	return &blocks_[no];
+}
+
+const JitBlock *JitBlockCache::GetBlock(int no) const {
 	return &blocks_[no];
 }
 
@@ -196,7 +186,7 @@ void JitBlockCache::ProxyBlock(u32 rootAddress, u32 startAddress, u32 size, cons
 
 	// Make binary searches and stuff work ok
 	b.normalEntry = codePtr;
-	b.checkedEntry = codePtr;
+	b.checkedEntry = (u8 *)codePtr;  // Ugh, casting away const..
 	proxyBlockMap_.insert(std::make_pair(startAddress, num_blocks_));
 	AddBlockMap(num_blocks_);
 
@@ -340,7 +330,7 @@ MIPSOpcode JitBlockCache::GetEmuHackOpForBlock(int blockNum) const {
 	return MIPSOpcode(MIPS_EMUHACK_OPCODE | off);
 }
 
-int JitBlockCache::GetBlockNumberFromStartAddress(u32 addr, bool realBlocksOnly) {
+int JitBlockCache::GetBlockNumberFromStartAddress(u32 addr, bool realBlocksOnly) const {
 	if (!blocks_ || !Memory::IsValidAddress(addr))
 		return -1;
 
@@ -414,46 +404,8 @@ void JitBlockCache::LinkBlockExits(int i) {
 			JitBlock &eb = blocks_[destinationBlock];
 			// Make sure the destination is not invalid.
 			if (!eb.invalid) {
-#if defined(ARM)
-				ARMXEmitter emit(b.exitPtrs[e]);
-				u32 op = *((const u32 *)emit.GetCodePtr());
-				bool prelinked = (op & 0xFF000000) == 0xEA000000;
-				// Jump directly to the block, yay.
-				emit.B(eb.checkedEntry);
-
-				if (!prelinked) {
-					do {
-						op = *((const u32 *)emit.GetCodePtr());
-						// Overwrite whatever is here with a breakpoint.
-						emit.BKPT(1);
-						// Stop after overwriting the next unconditional branch or BKPT.
-						// It can be a BKPT if we unlinked, and are now linking a different one.
-					} while ((op & 0xFF000000) != 0xEA000000 && (op & 0xFFF000F0) != 0xE1200070);
-				}
-				emit.FlushIcache();
+				MIPSComp::jit->LinkBlock(b.exitPtrs[e], eb.checkedEntry);
 				b.linkStatus[e] = true;
-#elif defined(_M_IX86) || defined(_M_X64)
-				XEmitter emit(b.exitPtrs[e]);
-				// Okay, this is a bit ugly, but we check here if it already has a JMP.
-				// That means it doesn't have a full exit to pad with INT 3.
-				bool prelinked = *emit.GetCodePtr() == 0xE9;
-				emit.JMP(eb.checkedEntry, true);
-
-				if (!prelinked) {
-					ptrdiff_t actualSize = emit.GetWritableCodePtr() - b.exitPtrs[e];
-					int pad = JitBlockCache::GetBlockExitSize() - (int)actualSize;
-					for (int i = 0; i < pad; ++i) {
-						emit.INT3();
-					}
-				}
-				b.linkStatus[e] = true;
-#elif defined(ARM64)
-				ARM64XEmitter emit(b.exitPtrs[e]);
-				emit.B(eb.checkedEntry);
-				// TODO: Write stuff after.
-				emit.FlushIcache();
-				b.linkStatus[e] = true;
-#endif
 			}
 		}
 	}
@@ -526,7 +478,7 @@ void JitBlockCache::RestoreSavedEmuHackOps(std::vector<u32> saved) {
 	}
 }
 
-void JitBlockCache::DestroyBlock(int block_num, bool invalidate) {
+void JitBlockCache::DestroyBlock(int block_num, DestroyType type) {
 	if (block_num < 0 || block_num >= num_blocks_) {
 		ERROR_LOG_REPORT(JIT, "DestroyBlock: Invalid block number %d", block_num);
 		return;
@@ -545,7 +497,7 @@ void JitBlockCache::DestroyBlock(int block_num, bool invalidate) {
 			int proxied_blocknum = GetBlockNumberFromStartAddress((*b->proxyFor)[i], false);
 			// If it was already cleared, we don't know which to destroy.
 			if (proxied_blocknum != -1) {
-				DestroyBlock(proxied_blocknum, invalidate);
+				DestroyBlock(proxied_blocknum, type);
 			}
 		}
 		b->proxyFor->clear();
@@ -565,7 +517,7 @@ void JitBlockCache::DestroyBlock(int block_num, bool invalidate) {
 	// In this case we probably "leak" the proxy block currently (no memory leak but it'll stay enabled).
 
 	if (b->invalid) {
-		if (invalidate)
+		if (type == DestroyType::INVALIDATE)
 			ERROR_LOG(JIT, "Invalidating invalid block %d", block_num);
 		return;
 	}
@@ -586,39 +538,14 @@ void JitBlockCache::DestroyBlock(int block_num, bool invalidate) {
 		return;
 	}
 
-#if defined(ARM)
-
-	// Send anyone who tries to run this block back to the dispatcher.
-	// Not entirely ideal, but .. pretty good.
-	// I hope there's enough space...
-	// checkedEntry is the only "linked" entrance so it's enough to overwrite that.
-	ARMXEmitter emit((u8 *)b->checkedEntry);
-	emit.MOVI2R(R0, b->originalAddress);
-	emit.STR(R0, CTXREG, offsetof(MIPSState, pc));
-	emit.B(MIPSComp::jit->dispatcher);
-	emit.FlushIcache();
-
-#elif defined(_M_IX86) || defined(_M_X64)
-
-	// Send anyone who tries to run this block back to the dispatcher.
-	// Not entirely ideal, but .. pretty good.
-	// Spurious entrances from previously linked blocks can only come through checkedEntry
-	XEmitter emit((u8 *)b->checkedEntry);
-	emit.MOV(32, M(&mips_->pc), Imm32(b->originalAddress));
-	emit.JMP(MIPSComp::jit->GetDispatcher(), true);
-
-#elif defined(ARM64)
-
-	// Send anyone who tries to run this block back to the dispatcher.
-	// Not entirely ideal, but .. works.
-	// Spurious entrances from previously linked blocks can only come through checkedEntry
-	ARM64XEmitter emit((u8 *)b->checkedEntry);
-	emit.MOVI2R(SCRATCH1, b->originalAddress);
-	emit.STR(INDEX_UNSIGNED, SCRATCH1, CTXREG, offsetof(MIPSState, pc));
-	emit.B(MIPSComp::jit->dispatcher);
-	emit.FlushIcache();
-
-#endif
+	if (b->checkedEntry) {
+		// We can skip this if we're clearing anyway, which cuts down on protect back and forth on WX exclusive.
+		if (type != DestroyType::CLEAR) {
+			MIPSComp::jit->UnlinkBlock(b->checkedEntry, b->originalAddress);
+		}
+	} else {
+		ERROR_LOG(JIT, "Unlinking block with no entry: %08x (%d)", b->originalAddress, block_num);
+	}
 }
 
 void JitBlockCache::InvalidateICache(u32 address, const u32 length) {
@@ -647,7 +574,7 @@ void JitBlockCache::InvalidateICache(u32 address, const u32 length) {
 			const u32 blockStart = next->first.second;
 			const u32 blockEnd = next->first.first;
 			if (blockStart < pEnd && blockEnd > pAddr) {
-				DestroyBlock(next->second, true);
+				DestroyBlock(next->second, DestroyType::INVALIDATE);
 				// Our iterator is now invalid.  Break and search again.
 				// Most of the time there shouldn't be a bunch of matching blocks.
 				goto restart;
@@ -667,7 +594,7 @@ void JitBlockCache::InvalidateChangedBlocks() {
 		const u32 emuhack = GetEmuHackOpForBlock(block_num).encoding;
 		if (Memory::ReadUnchecked_U32(b.originalAddress) != emuhack) {
 			DEBUG_LOG(JIT, "Invalidating changed block at %08x", b.originalAddress);
-			DestroyBlock(block_num, true);
+			DestroyBlock(block_num, DestroyType::INVALIDATE);
 		}
 	}
 }
@@ -687,12 +614,12 @@ int JitBlockCache::GetBlockExitSize() {
 #endif
 }
 
-void JitBlockCache::ComputeStats(BlockCacheStats &bcStats) {
+void JitBlockCache::ComputeStats(BlockCacheStats &bcStats) const {
 	double totalBloat = 0.0;
 	double maxBloat = 0.0;
 	double minBloat = 1000000000.0;
 	for (int i = 0; i < num_blocks_; i++) {
-		JitBlock *b = GetBlock(i);
+		const JitBlock *b = GetBlock(i);
 		double codeSize = (double)b->codeSize;
 		if (codeSize == 0)
 			continue;
@@ -713,4 +640,26 @@ void JitBlockCache::ComputeStats(BlockCacheStats &bcStats) {
 	bcStats.minBloat = minBloat;
 	bcStats.maxBloat = maxBloat;
 	bcStats.avgBloat = totalBloat / (double)num_blocks_;
+}
+
+JitBlockDebugInfo JitBlockCache::GetBlockDebugInfo(int blockNum) const {
+	JitBlockDebugInfo debugInfo{};
+	const JitBlock *block = GetBlock(blockNum);
+	debugInfo.originalAddress = block->originalAddress;
+	for (u32 addr = block->originalAddress; addr <= block->originalAddress + block->originalSize * 4; addr += 4) {
+		char temp[256];
+		MIPSDisAsm(Memory::Read_Instruction(addr), addr, temp, true);
+		std::string mipsDis = temp;
+		debugInfo.origDisasm.push_back(mipsDis);
+	}
+
+#if defined(ARM)
+	debugInfo.targetDisasm = DisassembleArm2(block->normalEntry, block->codeSize);
+#elif defined(ARM64)
+	debugInfo.targetDisasm = DisassembleArm64(block->normalEntry, block->codeSize);
+#elif defined(_M_IX86) || defined(_M_X64)
+	debugInfo.targetDisasm = DisassembleX86(block->normalEntry, block->codeSize);
+#endif
+
+	return debugInfo;
 }

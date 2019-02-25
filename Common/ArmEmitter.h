@@ -18,14 +18,12 @@
 #pragma once
 
 #include <vector>
-#include <stdint.h>
+#include <cstdint>
 
 #include "Common.h"
 #include "ArmCommon.h"
 #include "CodeBlock.h"
 #include "MsgHandler.h"
-
-// TODO: Check if Pandora still needs signal.h/kill here. Symbian doesn't.
 
 // VCVT flags
 #define TO_FLOAT      0
@@ -445,11 +443,12 @@ public:
 	}
 	virtual ~ARMXEmitter() {}
 
-	void SetCodePtr(u8 *ptr);
+	void SetCodePointer(u8 *ptr);
+	const u8 *GetCodePointer() const;
+
 	void ReserveCodeSpace(u32 bytes);
 	const u8 *AlignCode16();
 	const u8 *AlignCodePage();
-	const u8 *GetCodePtr() const;
 	void FlushIcache();
 	void FlushIcacheSection(u8 *start, u8 *end);
 	u8 *GetWritableCodePtr();
@@ -896,7 +895,7 @@ public:
 
 class ARMXCodeBlock : public CodeBlock<ARMXEmitter> {
 public:
-	void PoisonMemory() override;
+	void PoisonMemory(int offset) override;
 };
 
 // VFP Specific

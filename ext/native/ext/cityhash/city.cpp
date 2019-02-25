@@ -27,14 +27,12 @@
 // possible hash functions, by using SIMD instructions, or by
 // compromising on hash quality.
 
-#ifdef ANDROID
-#undef __SSE4_2__
-#endif
 #include "city.h"
 
 #include <algorithm>
 #include <stdlib.h>  // To check for glibc
 #include <string.h>  // for memcpy and memset
+#include <cstdlib>
 
 using namespace std;
 
@@ -54,7 +52,7 @@ static uint32 UNALIGNED_LOAD32(const char *p) {
 #define bswap_32(x) _byteswap_ulong(x)
 #define bswap_64(x) _byteswap_uint64(x)
 
-#elif defined(__GLIBC__)
+#elif defined(__GLIBC__) || defined(__ANDROID__)
 #include <byteswap.h>
 
 #elif defined(__APPLE__)
@@ -91,14 +89,14 @@ static uint32 UNALIGNED_LOAD32(const char *p) {
                        | (((x) & 0x0000ff00) << 8)  \
                        | (((x) & 0x00ff0000) >> 8)  \
                        | (((x) & 0xff000000) >> 24))
-#define bswap_64(x) (0 | (((x) & UINT64_C(0x00000000000000ff)) << 56) \
-                       | (((x) & UINT64_C(0x000000000000ff00)) << 40) \
-                       | (((x) & UINT64_C(0x0000000000ff0000)) << 24) \
-                       | (((x) & UINT64_C(0x00000000ff000000)) << 8)  \
-                       | (((x) & UINT64_C(0x000000ff00000000)) >> 8)  \
-                       | (((x) & UINT64_C(0x0000ff0000000000)) >> 24) \
-                       | (((x) & UINT64_C(0x00ff000000000000)) >> 40) \
-                       | (((x) & UINT64_C(0xff00000000000000)) >> 56))
+#define bswap_64(x) (0 | (((x) & 0x00000000000000ffULL) << 56) \
+                       | (((x) & 0x000000000000ff00ULL) << 40) \
+                       | (((x) & 0x0000000000ff0000ULL) << 24) \
+                       | (((x) & 0x00000000ff000000ULL) << 8)  \
+                       | (((x) & 0x000000ff00000000ULL) >> 8)  \
+                       | (((x) & 0x0000ff0000000000ULL) >> 24) \
+                       | (((x) & 0x00ff000000000000ULL) >> 40) \
+                       | (((x) & 0xff00000000000000ULL) >> 56))
 #endif
 
 #ifdef WORDS_BIGENDIAN
@@ -520,7 +518,7 @@ uint128 CityHash128(const char *s, size_t len) {
       CityHash128WithSeed(s, len, uint128(k0, k1));
 }
 
-#ifdef __SSE4_2__
+#if defined(__x86_64__) && defined(__SSE4_2__)
 #include "citycrc.h"
 #include <nmmintrin.h>
 

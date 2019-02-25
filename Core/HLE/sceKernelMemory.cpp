@@ -20,8 +20,6 @@
 #include <vector>
 #include <map>
 
-#include "base/compat.h"
-
 #include "Common/ChunkFile.h"
 #include "Core/HLE/HLE.h"
 #include "Core/HLE/FunctionWrappers.h"
@@ -347,15 +345,15 @@ struct SceKernelVplHeader {
 		while (b.ptr < lastBlock.ptr) {
 			bool isFree = b->next.ptr != SentinelPtr();
 			if (nextFreeBlock_ == b && isFree) {
-				NOTICE_LOG(HLE, "NEXT:  %x -> %x (size %x)", b.ptr - startPtr_, b->next.ptr - startPtr_, b->sizeInBlocks * 8);
+				NOTICE_LOG(SCEKERNEL, "NEXT:  %x -> %x (size %x)", b.ptr - startPtr_, b->next.ptr - startPtr_, b->sizeInBlocks * 8);
 			} else if (isFree) {
-				NOTICE_LOG(HLE, "FREE:  %x -> %x (size %x)", b.ptr - startPtr_, b->next.ptr - startPtr_, b->sizeInBlocks * 8);
+				NOTICE_LOG(SCEKERNEL, "FREE:  %x -> %x (size %x)", b.ptr - startPtr_, b->next.ptr - startPtr_, b->sizeInBlocks * 8);
 			} else {
-				NOTICE_LOG(HLE, "BLOCK: %x (size %x)", b.ptr - startPtr_, b->sizeInBlocks * 8);
+				NOTICE_LOG(SCEKERNEL, "BLOCK: %x (size %x)", b.ptr - startPtr_, b->sizeInBlocks * 8);
 			}
 			b += b->sizeInBlocks;
 		}
-		NOTICE_LOG(HLE, "LAST:  %x -> %x (size %x)", lastBlock.ptr - startPtr_, lastBlock->next.ptr - startPtr_, lastBlock->sizeInBlocks * 8);
+		NOTICE_LOG(SCEKERNEL, "LAST:  %x -> %x (size %x)", lastBlock.ptr - startPtr_, lastBlock->next.ptr - startPtr_, lastBlock->sizeInBlocks * 8);
 	}
 
 	PSPPointer<SceKernelVplBlock> MergeBlocks(PSPPointer<SceKernelVplBlock> first, PSPPointer<SceKernelVplBlock> second) {
@@ -2296,8 +2294,16 @@ const HLEFunction SysMemUserForUser[] = {
 	{0XD8DE5C1E, &WrapU_V<SysMemUserForUser_D8DE5C1E>,            "SysMemUserForUser_D8DE5C1E",            'x', ""     },
 };
 
+const HLEFunction SysMemForKernel[] = {
+	{0x636C953B, nullptr,                                         "SysMemForKernel_636c953b",              '?', ""        },
+	{0xC9805775, nullptr,                                         "SysMemForKernel_c9805775",              '?', ""        },
+	{0x1C1FBFE7, nullptr,                                         "SysMemForKernel_1c1fbfe7",              '?', ""        },
+};
 
-void Register_SysMemUserForUser()
-{
+void Register_SysMemForKernel() {
+	RegisterModule("SysMemForKernel", ARRAY_SIZE(SysMemForKernel), SysMemForKernel);
+}
+
+void Register_SysMemUserForUser() {
 	RegisterModule("SysMemUserForUser", ARRAY_SIZE(SysMemUserForUser), SysMemUserForUser);
 }

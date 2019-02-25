@@ -66,6 +66,13 @@ enum GPUDebugBufferFormat {
 	GPU_DBG_FORMAT_888_RGB = 0x20,
 };
 
+enum GPUDebugFramebufferType {
+	// The current render target.
+	GPU_DBG_FRAMEBUF_RENDER,
+	// The current display target (not the displayed screen, though.)
+	GPU_DBG_FRAMEBUF_DISPLAY,
+};
+
 inline GPUDebugBufferFormat &operator |=(GPUDebugBufferFormat &lhs, const GPUDebugBufferFormat &rhs) {
 	lhs = GPUDebugBufferFormat((int)lhs | (int)rhs);
 	return lhs;
@@ -172,6 +179,9 @@ struct GPUDebugVertex {
 	float y;
 	float z;
 	u8 c[4];
+	float nx;
+	float ny;
+	float nz;
 };
 
 class GPUDebugInterface {
@@ -206,7 +216,7 @@ public:
 
 	// Needs to be called from the GPU thread, so on the same thread as a notification is fine.
 	// Calling from a separate thread (e.g. UI) may fail.
-	virtual bool GetCurrentFramebuffer(GPUDebugBuffer &buffer) {
+	virtual bool GetCurrentFramebuffer(GPUDebugBuffer &buffer, GPUDebugFramebufferType type, int maxRes = -1) {
 		// False means unsupported.
 		return false;
 	}
@@ -227,6 +237,10 @@ public:
 	}
 
 	virtual bool GetCurrentClut(GPUDebugBuffer &buffer) {
+		return false;
+	}
+
+	virtual bool GetOutputFramebuffer(GPUDebugBuffer &buffer) {
 		return false;
 	}
 

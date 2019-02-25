@@ -17,7 +17,19 @@
 
 // Adapted from Dolphin.
 
-#include <string.h>
+// 16 bit Stereo
+
+#define MAX_SAMPLES_DEFAULT (4096) // 2*64ms - had to double it for nVidia Shield which has huge buffers
+#define MAX_SAMPLES_EXTRA   (8192)
+
+#define LOW_WATERMARK_DEFAULT   1680 // 40 ms
+#define LOW_WATERMARK_EXTRA 3360 // 80 ms
+
+#define MAX_FREQ_SHIFT  200  // per 32000 Hz
+#define CONTROL_FACTOR  0.2f // in freq_shift per fifo size offset
+#define CONTROL_AVG     32
+
+#include <cstring>
 
 #include "base/logging.h"
 #include "base/NativeApp.h"
@@ -25,27 +37,58 @@
 #include "Common/MathUtil.h"
 #include "Common/Atomics.h"
 #include "Core/Config.h"
+#include "Core/ConfigValues.h"
 #include "Core/HW/StereoResampler.h"
 #include "Core/HLE/__sceAudio.h"
+#include "Core/Util/AudioFormat.h"  // for clamp_u8
 #include "Core/System.h"
-#include "Globals.h"
 
 #ifdef _M_SSE
 #include <emmintrin.h>
 #endif
-
+#if PPSSPP_ARCH(ARM_NEON)
+#include <arm_neon.h>
+#endif
 
 StereoResampler::StereoResampler()
-	: m_dma_mixer(this, 44100)
-{
-	// Some Android devices are v-synced to non-60Hz framerates. We simply timestretch audio to fit. 
-	// TODO: should only do this if auto frameskip is off?
+		: m_bufsize(MAX_SAMPLES_DEFAULT)
+	  , m_lowwatermark(LOW_WATERMARK_DEFAULT)
+		, m_input_sample_rate(44100)
+		, m_indexW(0)
+		, m_indexR(0)
+		, m_numLeftI(0.0f)
+		, m_frac(0)
+		, underrunCount_(0)
+		, overrunCount_(0)
+		, sample_rate_(0.0f)
+		, lastBufSize_(0) {
+	// Need to have space for the worst case in case it changes.
+	m_buffer = new int16_t[MAX_SAMPLES_EXTRA * 2]();
 
+	// Some Android devices are v-synced to non-60Hz framerates. We simply timestretch audio to fit.
+	// TODO: should only do this if auto frameskip is off?
 	float refresh = System_GetPropertyInt(SYSPROP_DISPLAY_REFRESH_RATE) / 1000.0f;
 
 	// If framerate is "close"...
 	if (refresh != 60.0f && refresh > 50.0f && refresh < 70.0f) {
-		m_dma_mixer.SetInputSampleRate((int)(44100 * (refresh / 60.0f)));
+		SetInputSampleRate((int)(44100 * (refresh / 60.0f)));
+	}
+
+	UpdateBufferSize();
+}
+
+StereoResampler::~StereoResampler() {
+	delete[] m_buffer;
+	m_buffer = nullptr;
+}
+
+void StereoResampler::UpdateBufferSize() {
+	if (g_Config.bExtraAudioBuffering) {
+		m_bufsize = MAX_SAMPLES_EXTRA;
+		m_lowwatermark = LOW_WATERMARK_EXTRA;
+	} else {
+		m_bufsize = MAX_SAMPLES_DEFAULT;
+		m_lowwatermark = LOW_WATERMARK_DEFAULT;
 	}
 }
 
@@ -65,9 +108,25 @@ inline void ClampBufferToS16(s16 *out, const s32 *in, size_t size, s8 volShift) 
 		in += 8;
 		size -= 8;
 	}
+#elif PPSSPP_ARCH(ARM_NEON)
+	int16x4_t signedVolShift = vdup_n_s16 (-volShift); // Can only dynamic-shift right, but by a signed integer
+	while (size >= 8) {
+		int32x4_t in1 = vld1q_s32(in);
+		int32x4_t in2 = vld1q_s32(in + 4);
+		int16x4_t packed1 = vqmovn_s32(in1);
+		int16x4_t packed2 = vqmovn_s32(in2);
+		if (useShift) {
+			packed1 = vshl_s16(packed1, signedVolShift);
+			packed2 = vshl_s16(packed2, signedVolShift);
+		}
+		vst1_s16(out, packed1);
+		vst1_s16(out + 4, packed2);
+		out += 8;
+		in += 8;
+		size -= 8;
+	}
 #endif
-
-	// This does the remainder if SSE was used, otherwise it does it all.
+	// This does the remainder if SIMD was used, otherwise it does it all.
 	for (size_t i = 0; i < size; i++) {
 		out[i] = clamp_s16(useShift ? (in[i] >> volShift) : in[i]);
 	}
@@ -83,12 +142,15 @@ inline void ClampBufferToS16WithVolume(s16 *out, const s32 *in, size_t size) {
 	}
 }
 
-void StereoResampler::MixerFifo::Clear() {
-	memset(m_buffer, 0, sizeof(m_buffer));
+void StereoResampler::Clear() {
+	memset(m_buffer, 0, m_bufsize * 2 * sizeof(int16_t));
 }
 
 // Executed from sound stream thread
-unsigned int StereoResampler::MixerFifo::Mix(short* samples, unsigned int numSamples, bool consider_framelimit, int sample_rate) {
+unsigned int StereoResampler::Mix(short* samples, unsigned int numSamples, bool consider_framelimit, int sample_rate) {
+	if (!samples)
+		return 0;
+
 	unsigned int currentSample = 0;
 
 	// Cache access in non-volatile variable
@@ -101,6 +163,8 @@ unsigned int StereoResampler::MixerFifo::Mix(short* samples, unsigned int numSam
 	u32 indexR = Common::AtomicLoad(m_indexR);
 	u32 indexW = Common::AtomicLoad(m_indexW);
 
+	const int INDEX_MASK = (m_bufsize * 2 - 1);
+
 	// We force on the audio resampler if the output sample rate doesn't match the input.
 	if (!g_Config.bAudioResampler && sample_rate == (int)m_input_sample_rate) {
 		for (; currentSample < numSamples * 2 && ((indexW - indexR) & INDEX_MASK) > 2; currentSample += 2) {
@@ -110,24 +174,17 @@ unsigned int StereoResampler::MixerFifo::Mix(short* samples, unsigned int numSam
 			samples[currentSample + 1] = r1;
 			indexR += 2;
 		}
-		aid_sample_rate_ = sample_rate;
+		sample_rate_ = (float)sample_rate;
 	} else {
 		// Drift prevention mechanism
 		float numLeft = (float)(((indexW - indexR) & INDEX_MASK) / 2);
 		m_numLeftI = (numLeft + m_numLeftI*(CONTROL_AVG - 1)) / CONTROL_AVG;
-		float offset = (m_numLeftI - LOW_WATERMARK) * CONTROL_FACTOR;
+		float offset = (m_numLeftI - m_lowwatermark) * CONTROL_FACTOR;
 		if (offset > MAX_FREQ_SHIFT) offset = MAX_FREQ_SHIFT;
 		if (offset < -MAX_FREQ_SHIFT) offset = -MAX_FREQ_SHIFT;
 
-		aid_sample_rate_ = m_input_sample_rate + offset;
-	
-		/* Hm?
-		u32 framelimit = SConfig::GetInstance().m_Framelimit;
-		if (consider_framelimit && framelimit > 1) {
-			aid_sample_rate = aid_sample_rate * (framelimit - 1) * 5 / 59.994;
-		}*/
-
-		const u32 ratio = (u32)(65536.0f * aid_sample_rate_ / (float)sample_rate);
+		sample_rate_ = (float)(m_input_sample_rate + offset);
+		const u32 ratio = (u32)(65536.0 * sample_rate_ / (double)sample_rate);
 
 		// TODO: consider a higher-quality resampling algorithm.
 		// TODO: Add a fast path for 1:1.
@@ -148,7 +205,6 @@ unsigned int StereoResampler::MixerFifo::Mix(short* samples, unsigned int numSam
 	}
 
 	int realSamples = currentSample;
-
 	if (currentSample < numSamples * 2)
 		underrunCount_++;
 
@@ -172,23 +228,18 @@ unsigned int StereoResampler::MixerFifo::Mix(short* samples, unsigned int numSam
 	return realSamples / 2;
 }
 
-unsigned int StereoResampler::Mix(short* samples, unsigned int num_samples, bool consider_framelimit, int sample_rate) {
-	if (!samples)
-		return 0;
-
-	return m_dma_mixer.Mix(samples, num_samples, consider_framelimit, sample_rate);
-}
-
-void StereoResampler::MixerFifo::PushSamples(const s32 *samples, unsigned int num_samples) {
+void StereoResampler::PushSamples(const s32 *samples, unsigned int num_samples) {
+	UpdateBufferSize();
+	const int INDEX_MASK = (m_bufsize * 2 - 1);
 	// Cache access in non-volatile variable
 	// indexR isn't allowed to cache in the audio throttling loop as it
 	// needs to get updates to not deadlock.
 	u32 indexW = Common::AtomicLoad(m_indexW);
 
-	u32 cap = MAX_SAMPLES * 2;
+	u32 cap = m_bufsize * 2;
 	// If unthottling, no need to fill up the entire buffer, just screws up timing after releasing unthrottle.
 	if (PSP_CoreParameter().unthrottle)
-		cap = LOW_WATERMARK * 2;
+		cap = m_lowwatermark * 2;
 
 	// Check if we have enough free space
 	// indexW == m_indexR results in empty buffer, so indexR must always be smaller than indexW
@@ -199,7 +250,7 @@ void StereoResampler::MixerFifo::PushSamples(const s32 *samples, unsigned int nu
 		return;
 	}
 
-	int over_bytes = num_samples * 4 - (MAX_SAMPLES * 2 - (indexW & INDEX_MASK)) * sizeof(short);
+	int over_bytes = num_samples * 4 - (m_bufsize * 2 - (indexW & INDEX_MASK)) * sizeof(short);
 	if (over_bytes > 0) {
 		ClampBufferToS16WithVolume(&m_buffer[indexW & INDEX_MASK], samples, (num_samples * 4 - over_bytes) / 2);
 		ClampBufferToS16WithVolume(&m_buffer[0], samples + (num_samples * 4 - over_bytes) / sizeof(short), over_bytes / 2);
@@ -211,23 +262,19 @@ void StereoResampler::MixerFifo::PushSamples(const s32 *samples, unsigned int nu
 	lastPushSize_ = num_samples;
 }
 
-void StereoResampler::MixerFifo::GetAudioDebugStats(AudioDebugStats *stats) {
+void StereoResampler::GetAudioDebugStats(AudioDebugStats *stats) {
 	stats->buffered = lastBufSize_;
 	stats->underrunCount += underrunCount_;
 	underrunCount_ = 0;
 	stats->overrunCount += overrunCount_;
 	overrunCount_ = 0;
-	stats->watermark = LOW_WATERMARK;
-	stats->bufsize = MAX_SAMPLES * 2;
-	stats->instantSampleRate = aid_sample_rate_;
+	stats->watermark = m_lowwatermark;
+	stats->bufsize = m_bufsize * 2;
+	stats->instantSampleRate = (int)sample_rate_;
 	stats->lastPushSize = lastPushSize_;
 }
 
-void StereoResampler::PushSamples(const int *samples, unsigned int num_samples) {
-	m_dma_mixer.PushSamples(samples, num_samples);
-}
-
-void StereoResampler::MixerFifo::SetInputSampleRate(unsigned int rate) {
+void StereoResampler::SetInputSampleRate(unsigned int rate) {
 	m_input_sample_rate = rate;
 }
 
@@ -235,8 +282,4 @@ void StereoResampler::DoState(PointerWrap &p) {
 	auto s = p.Section("resampler", 1);
 	if (!s)
 		return;
-}
-
-void StereoResampler::GetAudioDebugStats(AudioDebugStats *stats) {
-	m_dma_mixer.GetAudioDebugStats(stats);
 }

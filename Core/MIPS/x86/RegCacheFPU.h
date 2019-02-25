@@ -44,9 +44,8 @@
 // and do it the old way.
 
 enum {
-	NUM_TEMPS = 16,
 	TEMP0 = 32 + 128,
-	NUM_MIPS_FPRS = 32 + 128 + NUM_TEMPS,
+	NUM_MIPS_FPRS = 32 + 128 + NUM_X86_FPU_TEMPS,
 };
 
 #ifdef _M_X64
@@ -98,7 +97,7 @@ public:
 	FPURegCache();
 	~FPURegCache() {}
 
-	void Start(MIPSState *mips, MIPSComp::JitState *js, MIPSComp::JitOptions *jo, MIPSAnalyst::AnalysisResults &stats);
+	void Start(MIPSState *mips, MIPSComp::JitState *js, MIPSComp::JitOptions *jo, MIPSAnalyst::AnalysisResults &stats, bool useRip);
 	void MapReg(int preg, bool doLoad = true, bool makeDirty = true);
 	void StoreFromRegister(int preg);
 	void StoreFromRegisterV(int preg) {
@@ -127,13 +126,11 @@ public:
 
 	const Gen::OpArg &R(int freg) const {return regs[freg].location;}
 	const Gen::OpArg &V(int vreg) const {
-		if (vregs[vreg].lane != 0)
-			PanicAlert("SIMD reg %d used as V reg (use VS instead)", vreg);
+		_dbg_assert_msg_(JIT, vregs[vreg].lane == 0, "SIMD reg %d used as V reg (use VS instead)", vreg);
 		return vregs[vreg].location;
 	}
 	const Gen::OpArg &VS(const u8 *vs) const {
-		if (vregs[vs[0]].lane == 0)
-			PanicAlert("V reg %d used as VS reg (use V instead)", vs[0]);
+		_dbg_assert_msg_(JIT, vregs[vs[0]].lane != 0, "V reg %d used as VS reg (use V instead)", vs[0]);
 		return vregs[vs[0]].location;
 	}
 
@@ -145,8 +142,7 @@ public:
 	}
 
 	Gen::X64Reg VX(int vreg) const {
-		if (vregs[vreg].lane != 0)
-			PanicAlert("SIMD reg %d used as V reg (use VSX instead)", vreg);
+		_dbg_assert_msg_(JIT, vregs[vreg].lane == 0, "SIMD reg %d used as V reg (use VSX instead)", vreg);
 		if (vregs[vreg].away && vregs[vreg].location.IsSimpleReg())
 			return vregs[vreg].location.GetSimpleReg();
 		PanicAlert("Not so simple - v%i", vreg);
@@ -154,8 +150,7 @@ public:
 	}
 
 	Gen::X64Reg VSX(const u8 *vs) const {
-		if (vregs[vs[0]].lane == 0)
-			PanicAlert("V reg %d used as VS reg (use VX instead)", vs[0]);
+		_dbg_assert_msg_(JIT, vregs[vs[0]].lane != 0, "V reg %d used as VS reg (use VX instead)", vs[0]);
 		if (vregs[vs[0]].away && vregs[vs[0]].location.IsSimpleReg())
 			return vregs[vs[0]].location.GetSimpleReg();
 		PanicAlert("Not so simple - v%i", vs[0]);
@@ -236,13 +231,11 @@ private:
 	X64CachedFPReg xregs[NUM_X_FPREGS];
 	MIPSCachedFPReg *vregs;
 
+	bool useRip_;
 	bool pendingFlush;
 	bool initialReady;
 	MIPSCachedFPReg regsInitial[NUM_MIPS_FPRS];
 	X64CachedFPReg xregsInitial[NUM_X_FPREGS];
-
-	// TEMP0, etc. are swapped in here if necessary (e.g. on x86.)
-	static float tempValues[NUM_TEMPS];
 
 	Gen::XEmitter *emit;
 	MIPSComp::JitState *js_;

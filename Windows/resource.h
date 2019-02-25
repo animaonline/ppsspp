@@ -81,6 +81,7 @@
 #define IDD_DUMPMEMORY                  253
 #define IDD_GEDBG_TAB_VERTICES          254
 #define IDD_GEDBG_TAB_MATRICES          255
+#define IDD_GEDBG_STEPCOUNT             256
 
 #define IDC_STOPGO                      1001
 #define IDC_ADDRESS                     1002
@@ -163,6 +164,9 @@
 #define IDC_GEDBG_MATRICES              1196
 #define IDC_GEDBG_FORCEOPAQUE           1197
 #define IDC_GEDBG_SHOWCLUT              1198
+#define IDC_BREAKPOINT_LOG_FORMAT       1199
+#define IDC_SHOWOFFSETS                 1200
+#define IDC_GEDBG_PRIMCOUNTER           1201
 
 #define ID_SHADERS_BASE  5000
 
@@ -175,7 +179,7 @@
 #define ID_DISASM_COPYINSTRUCTIONDISASM  40006
 #define ID_DISASM_COPYINSTRUCTIONHEX     40007
 #define ID_EMULATION_SPEEDLIMIT          40008
-#define ID_TOGGLE_PAUSE                  40009
+#define ID_TOGGLE_BREAK                  40009
 #define ID_EMULATION_STOP                40010
 #define ID_FILE_LOAD                     40011
 #define ID_HELP_ABOUT                    40012
@@ -204,7 +208,7 @@
 #define ID_FILE_QUICKSAVESTATE_HC        40036
 #define ID_FILE_QUICKLOADSTATE_HC        40037
 #define ID_OPTIONS_CONTROLS              40038
-#define ID_DEBUG_RUNONLOAD               40039
+#define ID_DEBUG_BREAKONLOAD             40039
 #define ID_DEBUG_DUMPNEXTFRAME           40040
 #define ID_OPTIONS_VERTEXCACHE           40041
 #define ID_OPTIONS_SHOWFPS               40042
@@ -240,8 +244,6 @@
 #define ID_DISASM_THREAD_KILL            40073
 #define ID_FILE_SAVESTATE_NEXT_SLOT      40074
 #define ID_FILE_SAVESTATE_NEXT_SLOT_HC   40075
-#define ID_OPTIONS_READFBOTOMEMORYGPU	 40076
-#define ID_OPTIONS_READFBOTOMEMORYCPU	 40077
 #define ID_OPTIONS_NONBUFFEREDRENDERING  40078
 #define ID_OPTIONS_FRAMESKIP_0           40079
 #define ID_OPTIONS_FRAMESKIP_1           40080
@@ -288,7 +290,7 @@
 #define IDC_GEDBG_LISTS_ALLLISTS         40123
 #define IDC_GEDBG_LISTS_STACK            40124
 #define IDC_GEDBG_LISTS_SELECTEDLIST     40125
-#define ID_OPTIONS_FXAA                  40126
+#define ID_OPTIONS_SHADER_MENU           40126
 #define IDC_DEBUG_BOTTOMTABS             40127
 #define ID_DEBUG_HIDEBOTTOMTABS          40128
 #define ID_DEBUG_TOGGLEBOTTOMTABTITLES   40129
@@ -317,6 +319,7 @@
 #define ID_OPTIONS_BUFLINEARFILTER       40152
 #define ID_OPTIONS_BUFNEARESTFILTER      40153
 #define ID_OPTIONS_DIRECT3D9             40154
+#define ID_OPTIONS_DIRECT3D11            40169
 #define ID_OPTIONS_OPENGL                40155
 #define ID_EMULATION_ROTATION_H          40156
 #define ID_EMULATION_ROTATION_V          40157
@@ -324,6 +327,48 @@
 #define ID_EMULATION_ROTATION_V_R        40159
 #define ID_OPTIONS_DISPLAY_LAYOUT        40160
 #define ID_OPTIONS_VULKAN                40161
+#define IDC_GEDBG_BREAKTARGET            40162
+#define ID_GEDBG_COPYALL                 40163
+#define ID_GEDBG_WATCH                   40164
+#define ID_FILE_DUMPFRAMES               40165
+#define ID_FILE_USEFFV1                  40166
+#define ID_FILE_DUMPAUDIO                40167
+#define ID_HELP_GITHUB                   40168
+#define IDC_GEDBG_RECORD                 40169
+#define ID_GEDBG_EXPORT_IMAGE            40170
+#define ID_GEDBG_ENABLE_PREVIEW          40171
+#define ID_OPTIONS_WINDOW6X              40172
+#define ID_OPTIONS_WINDOW7X              40173
+#define ID_OPTIONS_WINDOW8X              40174
+#define ID_OPTIONS_WINDOW9X              40175
+#define ID_OPTIONS_WINDOW10X             40176
+#define ID_EMULATION_PAUSE               40177
+#define ID_HELP_DISCORD                  40178
+#define IDC_GEDBG_STEPCURVE              40179
+#define ID_OPTIONS_FRAMESKIPTYPE_COUNT   40180
+#define ID_OPTIONS_FRAMESKIPTYPE_PRCNT   40181
+#define ID_FILE_MENU                     40182
+#define ID_EMULATION_MENU                40183
+#define ID_DEBUG_MENU                    40184
+#define ID_OPTIONS_MENU                  40185
+#define ID_HELP_MENU                     40186
+#define ID_FILE_SAVESTATE_SLOT_MENU      40187
+#define ID_FILE_RECORD_MENU              40188
+#define ID_EMULATION_ROTATION_MENU       40189
+#define ID_OPTIONS_SCREEN_MENU           40190
+#define ID_OPTIONS_WINDOW_MENU           40191
+#define ID_OPTIONS_BACKEND_MENU          40192
+#define ID_OPTIONS_RENDERMODE_MENU       40193
+#define ID_OPTIONS_FRAMESKIP_MENU        40194
+#define ID_OPTIONS_FRAMESKIPTYPE_MENU    40195
+#define ID_OPTIONS_TEXTUREFILTERING_MENU 40196
+#define ID_OPTIONS_SCREENFILTER_MENU     40197
+#define ID_OPTIONS_TEXTURESCALING_MENU   40198
+#define IDC_GEDBG_STEPCOUNT              40199
+#define IDC_GEDBG_STEPCOUNT_DEC          40200
+#define IDC_GEDBG_STEPCOUNT_INC          40201
+#define IDC_GEDBG_STEPCOUNT_JUMP         40202
+#define IDC_GEDBG_STEPCOUNT_COMBO        40203
 
 // Dummy option to let the buffered rendering hotkey cycle through all the options.
 #define ID_OPTIONS_BUFFEREDRENDERINGDUMMY 40500
@@ -336,8 +381,8 @@
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        256
-#define _APS_NEXT_COMMAND_VALUE         40161
-#define _APS_NEXT_CONTROL_VALUE         1199
+#define _APS_NEXT_COMMAND_VALUE         40200
+#define _APS_NEXT_CONTROL_VALUE         1202
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

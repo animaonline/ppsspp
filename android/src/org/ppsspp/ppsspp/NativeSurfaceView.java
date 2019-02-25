@@ -13,13 +13,14 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Build;
 import android.os.Handler;
-// import android.os.Build;
-// import android.util.Log;
 import android.util.Log;
 import android.view.MotionEvent;
 import android.view.SurfaceView;
 
-import com.bda.controller.*;
+import com.bda.controller.Controller;
+import com.bda.controller.ControllerListener;
+import com.bda.controller.KeyEvent;
+import com.bda.controller.StateEvent;
 
 public class NativeSurfaceView extends SurfaceView implements SensorEventListener, ControllerListener {
 	private static String TAG = "NativeSurfaceView";
@@ -30,23 +31,15 @@ public class NativeSurfaceView extends SurfaceView implements SensorEventListene
 	private Controller mController = null;
 	private boolean isMogaPro = false;
 
-	public NativeSurfaceView(NativeActivity activity, int fixedW, int fixedH) {
+	public NativeSurfaceView(NativeActivity activity) {
 		super(activity);
 
 		Log.i(TAG, "NativeSurfaceView");
 
-		mSensorManager = (SensorManager)activity.getSystemService(Activity.SENSOR_SERVICE);
+		mSensorManager = (SensorManager) activity.getSystemService(Activity.SENSOR_SERVICE);
 		mAccelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
 
 		mController = Controller.getInstance(activity);
-
-		// Maybe we need to use this?
-		if (fixedW != 0 && fixedH != 0) {
-			Log.i(TAG, "Setting surface holder to use a fixed size of " + fixedW + "x" + fixedH + " pixels");
-			this.getHolder().setFixedSize(fixedW, fixedH);
-		} else {
-			Log.i(TAG, "Using default backbuffer size.");
-		}
 
 		// this.getHolder().setFormat(PixelFormat.RGBA_8888);
 
@@ -55,7 +48,7 @@ public class NativeSurfaceView extends SurfaceView implements SensorEventListene
 			Log.i(TAG, "MOGA initialized");
 			mController.setListener(this, new Handler());
 		} catch (Exception e) {
-			Log.i(TAG, "Moga failed to initialize");
+			// Ignore.
 		}
 	}
 
@@ -70,8 +63,6 @@ public class NativeSurfaceView extends SurfaceView implements SensorEventListene
 		boolean canReadToolType = Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH;
 
 		int numTouchesHandled = 0;
-		//float scaleX = (float)mActivity.getRenderer().getDpiScaleX();
-		//float scaleY = (float)mActivity.getRenderer().getDpiScaleY();
 		for (int i = 0; i < ev.getPointerCount(); i++) {
 			int pid = ev.getPointerId(i);
 			int code = 0;
@@ -100,7 +91,7 @@ public class NativeSurfaceView extends SurfaceView implements SensorEventListene
 			if (code != 0) {
 				if (canReadToolType) {
 					int tool = getToolType(ev, i);
-					code |= tool << 10;  // We use the Android tool type codes
+					code |= tool << 10; // We use the Android tool type codes
 				}
 				// Can't use || due to short circuit evaluation
 				numTouchesHandled += NativeApp.touch(ev.getX(i), ev.getY(i), code, pid) ? 1 : 0;
@@ -134,13 +125,13 @@ public class NativeSurfaceView extends SurfaceView implements SensorEventListene
 		mSensorManager.registerListener(this, mAccelerometer, SensorManager.SENSOR_DELAY_GAME);
 		if (mController != null) {
 			mController.onResume();
-
 			// According to the docs, the Moga's state can be inconsistent here.
-			// We should do a one time poll. TODO
+			// Should we do a one time poll?
 		}
 	}
 
 	public void onDestroy() {
+		Log.i(TAG, "onDestroy");
 		if (mController != null) {
 			mController.exit();
 		}
@@ -165,7 +156,7 @@ public class NativeSurfaceView extends SurfaceView implements SensorEventListene
 			}
 		}
 
-		boolean repeat = false;  // Moga has no repeats?
+		boolean repeat = false; // Moga has no repeats?
 		switch (event.getAction()) {
 		case KeyEvent.ACTION_DOWN:
 			NativeApp.keyDown(NativeApp.DEVICE_ID_PAD_0, event.getKeyCode(), repeat);

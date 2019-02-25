@@ -24,10 +24,10 @@
 #include <cstring>
 #include "util/text/parsers.h"
 #include "Core/Core.h"
+#include "Core/Host.h"
 #include "Core/HLE/sceKernelInterrupt.h"
 #include "Core/HLE/sceKernelThread.h"
 #include "Core/HLE/sceKernelMemory.h"
-#include "UI/OnScreenDisplay.h"
 #include "proAdhoc.h" 
 #include "i18n/i18n.h"
 
@@ -51,9 +51,10 @@ int metasocket;
 SceNetAdhocctlParameter parameter;
 SceNetAdhocctlAdhocId product_code;
 std::thread friendFinderThread;
-recursive_mutex peerlock;
+std::recursive_mutex peerlock;
 SceNetAdhocPdpStat * pdp[255];
 SceNetAdhocPtpStat * ptp[255];
+uint32_t localip;
 
 int isLocalMAC(const SceNetEtherAddr * addr) {
 	SceNetEtherAddr saddr;
@@ -103,7 +104,7 @@ void addFriend(SceNetAdhocctlConnectPacketS2C * packet) {
 	if (packet == NULL) return;
 
 	// Multithreading Lock
-	peerlock.lock();
+	std::lock_guard<std::recursive_mutex> guard(peerlock);
 
 	SceNetAdhocctlPeerInfo * peer = findFriend(&packet->mac);
 	// Already existed
@@ -142,9 +143,6 @@ void addFriend(SceNetAdhocctlConnectPacketS2C * packet) {
 			friends = peer;
 		}
 	}
-
-	// Multithreading Unlock
-	peerlock.unlock();
 }
 
 SceNetAdhocctlPeerInfo * findFriend(SceNetEtherAddr * MAC) {
@@ -165,7 +163,7 @@ SceNetAdhocctlPeerInfo * findFriend(SceNetEtherAddr * MAC) {
 void changeBlockingMode(int fd, int nonblocking) {
 	unsigned long on = 1;
 	unsigned long off = 0;
-#ifdef _MSC_VER
+#ifdef _WIN32
 	if (nonblocking){
 		// Change to Non-Blocking Mode
 		ioctlsocket(fd, FIONBIO, &on);
@@ -1286,7 +1284,7 @@ int getActivePeerCount(void) {
 }
 
 int getLocalIp(sockaddr_in * SocketAddress){
-#if defined(_MSC_VER)
+#if defined(_WIN32)
 	// Get local host name
 	char szHostName[128] = "";
 
@@ -1302,7 +1300,7 @@ int getLocalIp(sockaddr_in * SocketAddress){
 	}
 	return -1;
 #else
-	SocketAddress->sin_addr.s_addr = inet_addr("192.168.12.1");
+	memcpy(&SocketAddress->sin_addr, &localip, sizeof(uint32_t));
 	return 0;
 #endif
 }
@@ -1419,7 +1417,7 @@ int initNetwork(SceNetAdhocctlAdhocId *adhoc_id){
 	iResult = getaddrinfo(g_Config.proAdhocServer.c_str(),0,NULL,&resultAddr);
 	if (iResult != 0) {
 		ERROR_LOG(SCENET, "DNS Error (%s)\n", g_Config.proAdhocServer.c_str());
-		osm.Show("DNS Error connecting to " + g_Config.proAdhocServer, 8.0f);
+		host->NotifyUserMessage("DNS Error connecting to " + g_Config.proAdhocServer, 8.0f);
 		return iResult;
 	}
 	for (ptr = resultAddr; ptr != NULL; ptr = ptr->ai_next) {
@@ -1442,9 +1440,11 @@ int initNetwork(SceNetAdhocctlAdhocId *adhoc_id){
 		char buffer[512];
 		snprintf(buffer, sizeof(buffer), "Socket error (%i) when connecting to %s/%u.%u.%u.%u:%u", errno, g_Config.proAdhocServer.c_str(), sip[0], sip[1], sip[2], sip[3], ntohs(server_addr.sin_port));
 		ERROR_LOG(SCENET, "%s", buffer);
-		osm.Show(std::string(buffer), 8.0f);
+		host->NotifyUserMessage(buffer, 8.0f);
 		return iResult;
 	}
+	//grab local ip for later use better than constant ip on non windows platform
+	localip = getLocalIp(metasocket);
 
 	// Prepare Login Packet
 	SceNetAdhocctlLoginPacketC2S packet;
@@ -1458,7 +1458,7 @@ int initNetwork(SceNetAdhocctlAdhocId *adhoc_id){
 	changeBlockingMode(metasocket, 1); // Change to non-blocking
 	if (sent > 0) {
 		I18NCategory *n = GetI18NCategory("Networking");
-		osm.Show(n->T("Network Initialized"), 1.0);
+		host->NotifyUserMessage(n->T("Network Initialized"), 1.0);
 		return 0;
 	}
 	else{
@@ -1525,7 +1525,7 @@ bool resolveMAC(SceNetEtherAddr * mac, uint32_t * ip) {
 	}
 
 	// Multithreading Lock
-	peerlock.lock();
+	std::lock_guard<std::recursive_mutex> guard(peerlock);
 
 	// Peer Reference
 	SceNetAdhocctlPeerInfo * peer = friends;
@@ -1537,16 +1537,10 @@ bool resolveMAC(SceNetEtherAddr * mac, uint32_t * ip) {
 			// Copy Data
 			*ip = peer->ip_addr;
 
-			// Multithreading Unlock
-			peerlock.unlock();
-
 			// Return Success
 			return true;
 		}
 	}
-
-	// Multithreading Unlock
-	peerlock.unlock();
 
 	// Peer not found
 	return false;

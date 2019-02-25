@@ -1,10 +1,16 @@
 #include "thread/executor.h"
-#include "base/functional.h"
+
+#include <functional>
+#include <thread>
 
 namespace threading {
 
 void SameThreadExecutor::Run(std::function<void()> func) {
-  func();
+	func();
+}
+
+void NewThreadExecutor::Run(std::function<void()> func) {
+	std::thread(func).detach();
 }
 
 }  // namespace threading

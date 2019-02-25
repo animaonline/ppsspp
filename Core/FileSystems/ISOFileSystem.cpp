@@ -187,7 +187,7 @@ ISOFileSystem::ISOFileSystem(IHandleAllocator *_hAlloc, BlockDevice *_blockDevic
 	treeroot->valid = false;
 
 	if (memcmp(desc.cd001, "CD001", 5)) {
-		ERROR_LOG(FILESYS, "ISO looks bogus? Giving up...");
+		ERROR_LOG(FILESYS, "ISO looks bogus, expected CD001 signature not present? Giving up...");
 		return;
 	}
 
@@ -201,9 +201,10 @@ ISOFileSystem::~ISOFileSystem() {
 }
 
 void ISOFileSystem::ReadDirectory(TreeEntry *root) {
-	for (u32 secnum = root->startsector, endsector = root->startsector + root->dirsize /2048; secnum < endsector; ++secnum) {
+	for (u32 secnum = root->startsector, endsector = root->startsector + (root->dirsize + 2047) / 2048; secnum < endsector; ++secnum) {
 		u8 theSector[2048];
 		if (!blockDevice->ReadBlock(secnum, theSector)) {
+			blockDevice->NotifyReadError();
 			ERROR_LOG(FILESYS, "Error reading block for directory %s - skipping", root->name.c_str());
 			root->valid = true;  // Prevents re-reading
 			return;
@@ -220,6 +221,7 @@ void ISOFileSystem::ReadDirectory(TreeEntry *root) {
 
 			const int IDENTIFIER_OFFSET = 33;
 			if (offset + IDENTIFIER_OFFSET + dir.identifierLength > 2048) {
+				blockDevice->NotifyReadError();
 				ERROR_LOG(FILESYS, "Directory entry crosses sectors, corrupt iso?");
 				return;
 			}
@@ -233,10 +235,10 @@ void ISOFileSystem::ReadDirectory(TreeEntry *root) {
 			if (dir.identifierLength == 1 && (dir.firstIdChar == '\x00' || dir.firstIdChar == '.')) {
 				entry->name = ".";
 				relative = true;
-			}	else if (dir.identifierLength == 1 && dir.firstIdChar == '\x01')			{
+			} else if (dir.identifierLength == 1 && dir.firstIdChar == '\x01') {
 				entry->name = "..";
 				relative = true;
-			}	else {
+			} else {
 				entry->name = std::string((const char *)&dir.firstIdChar, dir.identifierLength);
 				relative = false;
 			}
@@ -250,10 +252,11 @@ void ISOFileSystem::ReadDirectory(TreeEntry *root) {
 			entry->dirsize = dir.dataLength();
 			entry->valid = isFile;  // Can pre-mark as valid if file, as we don't recurse into those.
 			// Let's not excessively spam the log - I commented this line out.
-			//DEBUG_LOG(FILESYS, "%s: %s %08x %08x %i", e->isDirectory?"D":"F", e->name.c_str(), dir.firstDataSectorLE, e->startingPosition, e->startingPosition);
+			//DEBUG_LOG(FILESYS, "%s: %s %08x %08x %i", entry->isDirectory?"D":"F", entry->name.c_str(), dir.firstDataSectorLE, entry->startingPosition, entry->startingPosition);
 
 			if (entry->isDirectory && !relative) {
 				if (entry->startsector == root->startsector) {
+					blockDevice->NotifyReadError();
 					ERROR_LOG(FILESYS, "WARNING: Appear to have a recursive file system, breaking recursion. Probably corrupt ISO.");
 				}
 			}
@@ -652,7 +655,7 @@ std::vector<PSPFileInfo> ISOFileSystem::GetDirListing(std::string path) {
 		x.isOnSectorSystem = true;
 		x.startSector = e->startingPosition/2048;
 		x.sectorSize = sectorSize;
-		x.numSectors = (e->size + sectorSize - 1) / sectorSize;
+		x.numSectors = (u32)((e->size + sectorSize - 1) / sectorSize);
 		memset(&x.atime, 0, sizeof(x.atime));
 		memset(&x.mtime, 0, sizeof(x.mtime));
 		memset(&x.ctime, 0, sizeof(x.ctime));

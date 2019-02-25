@@ -17,27 +17,41 @@
 
 #pragma once
 
+#include <functional>
 #include <string>
 
-#include "base/functional.h"
 #include "ui/ui_screen.h"
 #include "ui/view.h"
 #include "ui/viewgroup.h"
 
 #include "UI/MiscScreens.h"
 
+enum class SavedataSortOption {
+	FILENAME,
+	SIZE,
+	DATE,
+};
+
 class SavedataBrowser : public UI::LinearLayout {
 public:
 	SavedataBrowser(std::string path, UI::LayoutParams *layoutParams = 0);
 
+	void SetSortOption(SavedataSortOption opt);
+
 	UI::Event OnChoice;
 
 private:
+	static bool ByFilename(const UI::View *, const UI::View *);
+	static bool BySize(const UI::View *, const UI::View *);
+	static bool ByDate(const UI::View *, const UI::View *);
+	static bool SortDone();
+
 	void Refresh();
 	UI::EventReturn SavedataButtonClick(UI::EventParams &e);
 
+	SavedataSortOption sortOption_ = SavedataSortOption::FILENAME;
+	UI::ViewGroup *gameList_ = nullptr;
 	std::string path_;
-	UI::ViewGroup *gameList_;
 };
 
 class SavedataScreen : public UIDialogScreenWithGameBackground {
@@ -50,7 +64,10 @@ public:
 
 protected:
 	UI::EventReturn OnSavedataButtonClick(UI::EventParams &e);
+	UI::EventReturn OnSortClick(UI::EventParams &e);
 	void CreateViews() override;
 	bool gridStyle_;
-	SavedataBrowser *browser_;
+	SavedataSortOption sortOption_ = SavedataSortOption::FILENAME;
+	SavedataBrowser *dataBrowser_;
+	SavedataBrowser *stateBrowser_;
 };
